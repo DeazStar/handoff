@@ -89,3 +89,38 @@ describe("what the agent is told", () => {
     expect(text).toMatch(/report_gap so the user can write the true story/);
   });
 });
+
+describe("accounts: what the agent can and cannot do", () => {
+  it("asks for an account and learns only whether one exists", async () => {
+    const job = await call("add_candidate_job", { title: "E", url: "https://acme.example/jobs/1" });
+    const req = await call("request_account", { jobId: job.data.id, pageUrl: "https://acme.example/signup", mode: "signup", passwordRules: { minLength: 12, symbols: false }, fields: ["email", "password", "confirm password"] });
+    expect(req.error).toBe(false);
+    expect(req.data).toMatchObject({ site: "acme.example", alreadyOpen: false });
+    expect((await call("request_account", { jobId: job.data.id, pageUrl: "https://acme.example/signup", mode: "signup" })).data.alreadyOpen).toBe(true);
+    createHumanApi(db).createAccount({ site: "acme.example", username: "secret-person@example.com" });
+    const st = await call("account_status", { pageUrl: "https://www.acme.example/login" });
+    expect(st.data).toEqual({ site: "acme.example", exists: true, confirmed: false, verified: false });
+    expect(st.text).not.toContain("secret-person");
+  });
+
+  it("has no tool that returns a username or a password", async () => {
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    for (const n of names) expect(n).not.toMatch(/password|credential|secret|vault|copy/i);
+    expect(names).toEqual(expect.arrayContaining(["request_account", "account_status"]));
+  });
+
+  it("refuses a request with a bad mode or a layout key", async () => {
+    expect((await call("request_account", { jobId: null, pageUrl: "https://acme.example/s", mode: "register" })).error).toBe(true);
+    // an extra top-level key is ignored, never stored
+    const extra = await call("request_account", { jobId: null, pageUrl: "https://extra.example/s", mode: "signup", password: "hunter2" });
+    expect(extra.error).toBe(false);
+    expect(JSON.stringify(db.prepare("SELECT payload FROM action_queue").all())).not.toContain("hunter2");
+    expect((await call("request_account", { jobId: null, pageUrl: "https://acme.example/s", mode: "signup", passwordRules: { minLength: 12, password: "x" } })).error).toBe(true);
+  });
+
+  it("is told never to touch a password", () => {
+    const text = client.getInstructions() ?? "";
+    expect(text).toMatch(/never type, read, copy or screenshot a password field/);
+    expect(text).toMatch(/request_account/);
+  });
+});

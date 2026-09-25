@@ -581,4 +581,17 @@ ALTER TABLE preferences ADD COLUMN salary_period TEXT CHECK (salary_period IN ('
       ALTER TABLE applications ADD COLUMN contact_id INTEGER REFERENCES contacts(id);
     `,
   },
+  {
+    id: 27,
+    name: "accounts_for_signup",
+    // The password is never in the database: it is in the vault under vault_name. confirmed_at: the user created the account on the site.
+    sql: `
+      ALTER TABLE accounts ADD COLUMN vault_name TEXT;
+      ALTER TABLE accounts ADD COLUMN login_url TEXT;
+      ALTER TABLE accounts ADD COLUMN confirmed_at TEXT;
+      ALTER TABLE accounts ADD COLUMN verified_at TEXT;
+      ALTER TABLE accounts ADD COLUMN last_used_at TEXT;
+      ALTER TABLE accounts ADD COLUMN job_id INTEGER;
+    `,
+  },
 ];

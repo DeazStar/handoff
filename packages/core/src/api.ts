@@ -14,6 +14,7 @@ import { addCandidateJob, logEvent, transitionJob, type NewJob } from "./jobs.js
 import { getPreferences, getProfile, setPreferences, setProfile, type Preferences, type Profile } from "./profile.js";
 import { directoryStats, importDirectory, listDirectory, listScoutCompanies, setCompanyVerdict, type DirectoryCompany, type DirectoryFilter, type Verdict } from "./directory.js";
 import { setCareersPage } from "./careers.js";
+import { accountStatus, confirmAccount, createAccount, deleteAccount, listAccounts, markAccountVerified, requestAccount, getAccount, touchAccount, type AccountRequest } from "./accounts.js";
 import { listTracker, recordManualApplication, type ManualApplication } from "./manual.js";
 import { applyMessageOutcome, draftFollowUp, dueFollowUps, getSyncState, listMessages, newMessageCount, setMessageCategory, setMessageStatus, type Category, type MessageStatus } from "./replies.js";
 import { coverMode, getCoverMaterial, latestCover, prepareCover, type CoverPlan } from "./cover.js";
@@ -57,6 +58,9 @@ export function createAgentApi(db: DB) {
     latestCover: (jobId: number) => latestCover(db, jobId),
     coverMode: () => coverMode(db),
     userLinkBudget: () => userLinkBudget(db),
+    // Accounts: the agent may ask for one and ask whether one exists. It never sees a password or a username.
+    requestAccount: (jobId: number | null, r: AccountRequest) => requestAccount(db, jobId, r, "agent"),
+    accountStatus: (site: string) => accountStatus(db, site),
     companyDomain: (companyId: number) => (db.prepare("SELECT domain FROM companies WHERE id = ?").get(companyId) as { domain: string | null } | undefined)?.domain ?? undefined,
     listScoutCompanies: (limit: number) => listScoutCompanies(db, limit, true),
     setCareersPage: (companyId: number, r: { url: string } | { none: true; note?: string }) => setCareersPage(db, companyId, r, "agent"),
@@ -155,6 +159,13 @@ export function createHumanApi(db: DB) {
     // The tracker: applications made by hand, and everything that has gone out.
     recordManualApplication: (m: ManualApplication) => recordManualApplication(db, m, "human"),
     listTracker: () => listTracker(db),
+    listAccounts: () => listAccounts(db),
+    getAccount: (id: number) => getAccount(db, id),
+    createAccount: (a: { site: string; username: string; loginUrl?: string; jobId?: number }) => createAccount(db, a, "human"),
+    confirmAccount: (id: number) => confirmAccount(db, id, "human"),
+    markAccountVerified: (id: number) => markAccountVerified(db, id, "human"),
+    touchAccount: (id: number) => touchAccount(db, id),
+    deleteAccount: (id: number) => deleteAccount(db, id, "human"),
     // Replies and follow-ups. The dashboard reads the mailbox itself; the agent cannot.
     listMessages: (opts?: { status?: MessageStatus; jobId?: number }) => listMessages(db, opts),
     newMessageCount: () => newMessageCount(db),

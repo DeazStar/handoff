@@ -3,11 +3,12 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { readFileSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
-import { effectiveSponsorship, collectYc, runCareerFinder, VERDICTS, type Verdict, COUNTRIES, EMPLOYMENT_TYPES, FACT_KINDS, defaultVerifyDeps, verifyContact, type VerifyDeps, TransitionError, createHumanApi, orderForCv, type CvPlan, type DB, type JobState } from "@jobhunt/core";
+import { generatePassword, siteOf, vaultNameFor, effectiveSponsorship, collectYc, runCareerFinder, VERDICTS, type Verdict, COUNTRIES, EMPLOYMENT_TYPES, FACT_KINDS, defaultVerifyDeps, verifyContact, type VerifyDeps, TransitionError, createHumanApi, orderForCv, type CvPlan, type DB, type JobState } from "@jobhunt/core";
 import { renderCvPdf } from "@jobhunt/render";
 import { VaultError, type Vault } from "@jobhunt/vault";
 import { MailError, type Mailer } from "./mail.js";
 import type { ReplySync } from "./replySync.js";
+import { systemClipboard, type Clipboard } from "./clipboard.js";
 
 const PUBLIC = new URL("../public/", import.meta.url);
 const STATIC: Record<string, [string, string]> = {
@@ -114,7 +115,7 @@ const int = (s: string) => {
   return n;
 };
 
-export function createApp(db: DB, opts: { token: string; dataDir: string; vault: Vault; mailer: Mailer; verifyDeps?: VerifyDeps; collectYc?: typeof collectYc; replySync?: ReplySync }): Server {
+export function createApp(db: DB, opts: { token: string; dataDir: string; vault: Vault; mailer: Mailer; verifyDeps?: VerifyDeps; collectYc?: typeof collectYc; replySync?: ReplySync; clipboard?: Clipboard; clipboardClearMs?: number }): Server {
   const vault = opts.vault;
   const mailer = opts.mailer;
   const human = createHumanApi(db);
@@ -366,6 +367,51 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
       throw e;
     }
   });
+  // ---- accounts for sites that need one ----
+  // The password is made here, saved in the vault, and copied to the clipboard by this server. No route returns it.
+  const clipboard = opts.clipboard ?? systemClipboard();
+  const clearMs = opts.clipboardClearMs ?? 30_000;
+  route("GET", "/api/accounts", () => human.listAccounts());
+  route("POST", "/api/accounts/start", async (_m, b) => {
+    const site = (() => { try { return siteOf(String(b.site ?? b.pageUrl ?? "")); } catch (e) { throw new HttpError(400, (e as Error).message); } })();
+    const username = String(b.username ?? human.getProfile()?.email ?? "").trim();
+    if (!username) throw new HttpError(400, "Say which email or username to use, or set your email in the profile");
+    if (!vault.status().unlocked) throw new VaultError("locked", "Unlock the vault first (Vault page)");
+    const rules = b.passwordRules && typeof b.passwordRules === "object" ? b.passwordRules : {};
+    let password: string;
+    try { password = generatePassword({ minLength: Number(rules.minLength) || undefined, maxLength: Number(rules.maxLength) || undefined, symbols: rules.symbols === false ? false : undefined }); }
+    catch (e) { throw new HttpError(400, (e as Error).message); }
+    await vault.set(vaultNameFor(site), JSON.stringify({ username, password }));
+    const id = human.createAccount({ site, username, loginUrl: optText(b.pageUrl), jobId: b.jobId === undefined ? undefined : int(String(b.jobId)) });
+    return { id, site, username };
+  });
+  route("POST", "/api/accounts/(\\d+)/copy", async (m, b) => {
+    const a = human.getAccount(int(m[1]!));
+    if (!a?.vaultName) throw new HttpError(404, "No saved password for that account");
+    const what = b.what === "username" ? "username" : "password";
+    const text = await vault.use(a.vaultName, (raw) => String(JSON.parse(raw)[what] ?? ""));
+    if (!text) throw new HttpError(404, `There is no saved ${what} for that account`);
+    await clipboard.write(text);
+    human.touchAccount(a.id);
+    if (what === "password") {
+      // Take it off the clipboard again, unless something else was copied in the meantime.
+      const timer = setTimeout(async () => { try { if ((await clipboard.read()) === text) await clipboard.write(""); } catch {} }, clearMs);
+      timer.unref();
+    }
+    return { ok: true, copied: what, clearsInSeconds: what === "password" ? Math.round(clearMs / 1000) : undefined };
+  });
+  route("POST", "/api/accounts/(\\d+)/confirm", (m) => (human.confirmAccount(int(m[1]!)), { ok: true }));
+  route("POST", "/api/accounts/(\\d+)/verified", (m) => (human.markAccountVerified(int(m[1]!)), { ok: true }));
+  route("DELETE", "/api/accounts/(\\d+)", async (m) => {
+    const a = human.getAccount(int(m[1]!));
+    if (!a) throw new HttpError(404, "Account not found");
+    // The saved password must go with the account, so the vault has to be open.
+    if (a.vaultName && !vault.status().unlocked) throw new VaultError("locked", "Unlock the vault first, so the saved password is deleted with the account");
+    human.deleteAccount(a.id);
+    if (a.vaultName) { try { await vault.remove(a.vaultName); } catch { /* already gone */ } }
+    return { ok: true };
+  });
+
   // ---- the tracker: everything that has gone out, and applications the user made by hand ----
   route("GET", "/api/tracker", () => human.listTracker());
   route("POST", "/api/tracker", (_m, b) => human.recordManualApplication({

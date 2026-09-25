@@ -51,6 +51,7 @@ const INSTRUCTIONS = `You are helping one user find and prepare job applications
 - Cookie banners are in the way, not part of the task. When a cookie or consent overlay appears on a site you visit, deal with it at once, before reading or filling anything: read cookieBanners from get_preferences. accept: click the button that accepts everything ("Accept all", "Allow all", "Accept cookies", "I agree", "OK"). necessary: click "Reject all", "Only necessary" or "Strictly necessary", or save the choices with every optional switch off. Look for the button in the page snapshot; it may be inside an iframe or at the bottom of a long overlay, and "Escape" or scrolling can bring it forward. Try up to three times, and if the page still cannot be used, say so. This concerns cookies only: the consent boxes inside an application form follow the form rules and the user's consent word, not this setting.
 - A form question that asks for a specific personal story the user's facts do not contain is never invented: answer as far as the facts go, and file a gap with report_gap so the user can write the true story and run the form again. A choice that states a fact about the user (where they are located, their age, their work eligibility) is answered from the profile and is not a consent.
 - A CAPTCHA that is part of a form is not a reason to leave the form unfilled: fill everything else, never touch the CAPTCHA, and list it for the user.
+- An application that needs an account is never yours to make. Call account_status for the site; if there is no account, call request_account (mode signup) and stop; if the page shows a login form and an account exists, call request_account (mode login) and stop. You have no tool that returns a username or a password, and you must never type, read, copy or screenshot a password field.
 - Never invent facts about the user. Use list_facts. If a job asks for something no fact supports, call report_gap.`;
 
 type Result = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -544,6 +545,25 @@ export function createMcpServer(
     { companyId: id },
     (a) => agent.listContacts(a.companyId),
     true,
+  );
+  tool(
+    "account_status",
+    "Whether the user already has an account on a site (any page of it will do): exists, confirmed (the user made it) and verified. Never returns a username or a password: you have no way to see them.",
+    { pageUrl: short(2000) },
+    (a) => agent.accountStatus(a.pageUrl),
+    true,
+  );
+  tool(
+    "request_account",
+    "Ask the user to create an account (mode signup) or to log in again (mode login) on a site, then STOP working on that job. Use it when an application needs an account. Give the page's address and, if the page says so, its password rules (passwordRules: minLength, maxLength, symbols false when special characters are forbidden) and the fields it shows. The user makes the password in their dashboard and types it themselves; you never create an account, never type or read a password, and never fill a password or confirm-password field. You may fill non-secret fields (name, email, phone) before you stop. After the user says the account is made, the job is run again.",
+    {
+      jobId: id.nullable(),
+      pageUrl: short(2000),
+      mode: z.enum(["signup", "login"]),
+      passwordRules: z.object({ minLength: z.number().int().min(1).max(256).optional(), maxLength: z.number().int().min(1).max(256).optional(), symbols: z.boolean().optional() }).strict().optional(),
+      fields: z.array(short(60)).max(12).optional(),
+    },
+    (a) => agent.requestAccount(a.jobId, { mode: a.mode, pageUrl: a.pageUrl, passwordRules: a.passwordRules, fields: a.fields }),
   );
   tool(
     "no_contact_found",

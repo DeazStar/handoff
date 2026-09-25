@@ -91,6 +91,42 @@ function jobLink(a) {
   return a.jobId ? h("a", { href: `#/jobs/${a.jobId}` }, a.jobTitle || `Job ${a.jobId}`) : h("span", { class: "muted" }, "no job");
 }
 
+// The password is made and copied by the server. It is never shown here and never sent to Claude.
+function signupCard(a) {
+  const p = a.payload;
+  const card = h("div", { class: "card" });
+  const draw = async () => {
+    const [accounts, profile] = await Promise.all([api("GET", "/api/accounts"), api("GET", "/api/profile")]);
+    const mine = accounts.find((x) => x.site === p.site);
+    const login = p.mode === "login" || (mine && mine.confirmedAt);
+    const copy = (id, what) => h("button", { onclick: async () => { try { const r = await api("POST", `/api/accounts/${id}/copy`, { what }); showNote(what === "password" ? `Password copied. It leaves the clipboard in ${r.clearsInSeconds} seconds.` : "Copied."); } catch (e) { showError(e); } } }, what === "password" ? "Copy password" : "Copy email");
+    const rules = p.passwordRules ? [p.passwordRules.minLength && `at least ${p.passwordRules.minLength} characters`, p.passwordRules.maxLength && `at most ${p.passwordRules.maxLength}`, p.passwordRules.symbols === false && "no special characters"].filter(Boolean).join(", ") : "";
+    const rows = [
+      h("div", { class: "row" }, h("span", { class: "badge" }, login ? "log in" : "create an account"), a.jobId ? jobLink(a) : null, h("strong", {}, p.site),
+        safeHref(p.applyUrl) ? h("a", { href: safeHref(p.applyUrl), target: "_blank", rel: "noopener noreferrer" }, "the page") : null),
+      h("div", { class: "muted" }, login ? "Claude found the login page. It cannot type the password: you do." : "Claude stops here: it never creates accounts and never sees a password. You make it, then run the job again."),
+      p.fields && p.fields.length ? h("div", { class: "muted" }, `The page asks for: ${p.fields.join(", ")}`) : null,
+      rules ? h("div", { class: "muted" }, `Password rules on that page: ${rules}`) : null,
+    ];
+    if (!mine) {
+      rows.push(h("div", { class: "row", style: "margin-top:8px" },
+        h("button", { class: "primary", onclick: async () => { try { await api("POST", "/api/accounts/start", { site: p.site, pageUrl: p.applyUrl, passwordRules: p.passwordRules, jobId: a.jobId || undefined }); await draw(); } catch (e) { showError(e); } } }, "Make a password"),
+        h("span", { class: "muted" }, `A random 20-character password is saved in your vault for ${p.site}. The account email is ${profile && profile.email ? profile.email : "(set your email in the profile)"}.`)));
+    } else {
+      rows.push(h("div", { class: "row", style: "margin-top:8px" }, copy(mine.id, "username"), copy(mine.id, "password"),
+        h("span", { class: "muted" }, "Paste each into the form yourself, tick the terms, solve any CAPTCHA, and press the site's own button.")));
+      rows.push(h("div", { class: "row", style: "margin-top:8px" },
+        h("button", { class: "primary", onclick: act(async () => { if (login) await api("POST", `/api/actions/${a.id}/resolve`, { status: "done" }); else await api("POST", `/api/accounts/${mine.id}/confirm`, {}); }) }, login ? "I am logged in" : "I created the account"),
+        h("button", { onclick: act(() => api("POST", `/api/actions/${a.id}/resolve`, { status: "dismissed" })) }, "Dismiss")));
+    }
+    if (!mine) rows.push(h("div", { class: "row" }, h("button", { onclick: act(() => api("POST", `/api/actions/${a.id}/resolve`, { status: "dismissed" })) }, "Dismiss")));
+    card.replaceChildren(...rows.filter(Boolean));
+  };
+  card.append(h("div", { class: "muted" }, "Loading..."));
+  draw().catch((e) => card.replaceChildren(h("div", { class: "error" }, String(e.message || e))));
+  return card;
+}
+
 function actionCard(a) {
   if (a.kind === "confirm_submit" && a.jobId) {
     return h("div", { class: "card" },
@@ -105,6 +141,7 @@ function actionCard(a) {
       h("div", { class: "muted" }, `Subject: ${a.payload.subject}`),
       h("div", { class: "row", style: "margin-top:8px" }, h("a", { href: `#/emails/${a.payload.emailId}` }, "Review the draft")));
   }
+  if (a.kind === "signup_needed" && a.payload && a.payload.site) return signupCard(a);
   if (a.kind === "follow_up" && a.jobId) {
     const why = (a.payload || {}).reason;
     const dismiss = h("button", { onclick: act(() => api("POST", `/api/actions/${a.id}/resolve`, { status: "dismissed" })) }, "Dismiss");
@@ -753,6 +790,35 @@ function manualApplicationForm(refresh) {
     }) }, "Add to the tracker")));
 }
 
+// Two clicks: this deletes the saved password too, and the user may not be able to get back in without resetting it on the site.
+function forgetButton(r) {
+  let armed = false;
+  const btn = h("button", { class: "danger", title: "Deletes the saved password together with the account", onclick: async () => {
+    if (!armed) {
+      armed = true;
+      btn.textContent = `Click again: delete the saved password for ${r.site} too`;
+      setTimeout(() => { armed = false; btn.textContent = "Forget this account and its password"; }, 6000);
+      return;
+    }
+    try { await api("DELETE", `/api/accounts/${r.id}`, {}); await accountsView(); } catch (e) { armed = false; btn.textContent = "Forget this account and its password"; showError(e); }
+  } }, "Forget this account and its password");
+  return btn;
+}
+
+async function accountsView() {
+  const rows = await api("GET", "/api/accounts");
+  view.replaceChildren(h("h1", {}, `Accounts (${rows.length})`),
+    h("p", { class: "muted" }, "Sites where you have an account made through this tool. The passwords are in your vault and are never shown: copy one when you need it. Passwords stay saved until you forget an account, which deletes its saved password too (the vault must be unlocked) and means you would reset it on the site to get back in."));
+  if (!rows.length) { view.append(h("div", { class: "empty" }, "No accounts yet. They appear when an application needs one.")); return; }
+  view.append(h("table", {}, rows.map((r) => h("tr", {},
+    h("td", {}, h("strong", {}, r.site), h("div", { class: "muted" }, r.username)),
+    h("td", { class: "muted" }, r.confirmedAt ? `created ${r.confirmedAt.slice(0, 10)}` : "password saved, account not confirmed", r.verifiedAt ? h("div", {}, "email verified") : null),
+    h("td", {}, h("button", { onclick: async () => { try { await api("POST", `/api/accounts/${r.id}/copy`, { what: "username" }); showNote("Copied."); } catch (e) { showError(e); } } }, "Copy email"),
+      h("button", { onclick: async () => { try { const x = await api("POST", `/api/accounts/${r.id}/copy`, { what: "password" }); showNote(`Password copied. It leaves the clipboard in ${x.clearsInSeconds} seconds.`); } catch (e) { showError(e); } } }, "Copy password")),
+    h("td", {}, !r.verifiedAt ? h("button", { onclick: act(() => api("POST", `/api/accounts/${r.id}/verified`, {})) }, "Mark email verified") : null,
+      forgetButton(r))))));
+}
+
 async function trackerView() {
   const rows = await api("GET", "/api/tracker");
   const params = new URLSearchParams(location.hash.split("?")[1] || "");
@@ -1152,6 +1218,7 @@ async function render() {
     else if (page === "emails") await (arg ? emailView(Number(arg)) : emailsView());
     else if (page === "replies") await repliesView();
     else if (page === "tracker") await trackerView();
+    else if (page === "accounts") await accountsView();
     else if (page === "companies") await companiesView();
     else if (page === "vault") await vaultView();
     else if (page === "settings") await settingsView();
@@ -1170,6 +1237,7 @@ async function render() {
     h("a", { href: "#/companies", class: page === "companies" ? "active" : "" }, "Companies"),
     h("a", { href: "#/applications", class: page === "applications" ? "active" : "" }, "Forms"),
     h("a", { href: "#/emails", class: page === "emails" ? "active" : "" }, "Emails"),
+    h("a", { href: "#/accounts", class: page === "accounts" ? "active" : "" }, "Accounts"),
     h("a", { href: "#/replies", class: page === "replies" ? "active" : "" }, `Replies${repliesNew ? ` (${repliesNew})` : ""}`),
     h("a", { href: "#/vault", class: page === "vault" ? "active" : "" }, "Vault"),
     h("a", { href: "#/settings", class: page === "settings" ? "active" : "" }, "Settings"));
