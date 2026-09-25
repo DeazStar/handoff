@@ -812,3 +812,60 @@ describe("checking pasted job links", () => {
     expect((await fetch(base + "/api/links/check", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
   });
 });
+
+describe("cookie banner setting", () => {
+  it("is saved from the settings page and given back", async () => {
+    const body = { roles: [], remotePolicy: "any", dailyApplicationLimit: 5, dailyDiscoveryLimit: 5 };
+    const put = (b: object) => fetch(base + "/api/preferences", { method: "PUT", headers: json, body: JSON.stringify({ ...body, ...b }) });
+    expect((await put({})).status).toBe(200);
+    expect((await (await get("/api/preferences")).json()).cookieBanners).toBe("accept");
+    await put({ cookieBanners: "necessary" });
+    expect((await (await get("/api/preferences")).json()).cookieBanners).toBe("necessary");
+    await put({ cookieBanners: "accept" });
+    expect((await (await get("/api/preferences")).json()).cookieBanners).toBe("accept");
+  });
+});
+
+describe("the tracker", () => {
+  const body = (over: object = {}) => ({ title: "Backend Engineer", company: "Acme", appliedOn: new Date(Date.now() - 3 * 86_400_000).toLocaleDateString("sv-SE"), how: "form", ...over });
+
+  it("records an application made by hand and lists it, and needs the token", async () => {
+    expect((await fetch(base + "/api/tracker")).status).toBe(401);
+    expect(await (await get("/api/tracker")).json()).toEqual([]);
+    const res = await post("/api/tracker", body({ status: "interview", notes: "Referred by Sam", contactEmail: "jane@acme.example", how: "email" }));
+    expect(res.status).toBe(200);
+    const rows = await (await get("/api/tracker")).json();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ title: "Backend Engineer", company: "Acme", state: "interview", route: "email", manual: true, notes: "Referred by Sam", contactEmail: "jane@acme.example", daysSince: 3 });
+    expect(rows[0].allowed).toEqual(["offer", "rejected"]);
+  });
+
+  it("refuses a duplicate, a future date and a bad address with a plain message", async () => {
+    await post("/api/tracker", body());
+    const dup = await post("/api/tracker", body());
+    expect(dup.status).toBeGreaterThanOrEqual(400);
+    expect((await dup.json()).error).toMatch(/already track this one/);
+    expect((await post("/api/tracker", body({ title: "Other", appliedOn: "2999-01-01" }))).status).toBeGreaterThanOrEqual(400);
+    expect((await post("/api/tracker", body({ title: "Third", how: "email", contactEmail: "nope" }))).status).toBeGreaterThanOrEqual(400);
+  });
+
+  it("lets the status be changed with the same route as the job page", async () => {
+    const { jobId } = await (await post("/api/tracker", body())).json();
+    expect((await post(`/api/jobs/${jobId}/transition`, { to: "replied" })).status).toBe(200);
+    expect((await (await get("/api/tracker")).json())[0].state).toBe("replied");
+  });
+});
+
+describe("sponsorship inferred from the work authorization text", () => {
+  it("is shown on the profile until the user picks, and not once they do", async () => {
+    const put = (b: object) => fetch(base + "/api/profile", { method: "PUT", headers: json, body: JSON.stringify({ fullName: "Ada Lovelace", ...b }) });
+    await put({ workAuthorization: "needs sponsership" });
+    expect((await (await get("/api/profile")).json()).inferredSponsorship).toEqual({ value: true, from: "work authorization text" });
+    await put({ workAuthorization: "needs sponsership", requiresSponsorship: false });
+    const p = await (await get("/api/profile")).json();
+    expect(p.requiresSponsorship).toBe(false);
+    expect(p.inferredSponsorship).toBeUndefined();
+    await put({ workAuthorization: "citizen" });
+    expect((await (await get("/api/profile")).json()).inferredSponsorship).toBeUndefined();
+  });
+});

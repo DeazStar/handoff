@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { readFileSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
-import { collectYc, runCareerFinder, VERDICTS, type Verdict, COUNTRIES, EMPLOYMENT_TYPES, FACT_KINDS, defaultVerifyDeps, verifyContact, type VerifyDeps, TransitionError, createHumanApi, orderForCv, type CvPlan, type DB, type JobState } from "@jobhunt/core";
+import { effectiveSponsorship, collectYc, runCareerFinder, VERDICTS, type Verdict, COUNTRIES, EMPLOYMENT_TYPES, FACT_KINDS, defaultVerifyDeps, verifyContact, type VerifyDeps, TransitionError, createHumanApi, orderForCv, type CvPlan, type DB, type JobState } from "@jobhunt/core";
 import { renderCvPdf } from "@jobhunt/render";
 import { VaultError, type Vault } from "@jobhunt/vault";
 import { MailError, type Mailer } from "./mail.js";
@@ -169,7 +169,7 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
   route("DELETE", "/api/facts/(\\d+)", (m) => (human.deleteFact(int(m[1]!)), { ok: true }));
   route("POST", "/api/facts/(\\d+)/make-general", (m) => (human.makeFactGeneral(int(m[1]!)), { ok: true }));
 
-  route("GET", "/api/profile", () => human.getProfile());
+  route("GET", "/api/profile", () => { const p = human.getProfile(); return p ? { ...p, inferredSponsorship: p.requiresSponsorship === undefined ? effectiveSponsorship(p) : undefined } : p; });
   route("PUT", "/api/profile", (_m, b) => {
     human.setProfile({
       fullName: String(b.fullName ?? ""),
@@ -203,6 +203,7 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
       cvGuidance: optText(b.cvGuidance),
       coverLetters: b.coverLetters === "off" ? "off" : b.coverLetters === "auto" ? "auto" : undefined,
       coverGuidance: optText(b.coverGuidance),
+      cookieBanners: b.cookieBanners === "necessary" ? "necessary" : b.cookieBanners === "accept" ? "accept" : undefined,
       autoMarkReplied: b.autoMarkReplied === false ? false : b.autoMarkReplied === true ? true : undefined,
       followUpDays: b.followUpDays === undefined ? undefined : Number(b.followUpDays),
       maxFollowUps: b.maxFollowUps === undefined ? undefined : Number(b.maxFollowUps),
@@ -365,6 +366,20 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
       throw e;
     }
   });
+  // ---- the tracker: everything that has gone out, and applications the user made by hand ----
+  route("GET", "/api/tracker", () => human.listTracker());
+  route("POST", "/api/tracker", (_m, b) => human.recordManualApplication({
+    title: String(b.title ?? ""),
+    company: String(b.company ?? ""),
+    url: optText(b.url),
+    appliedOn: String(b.appliedOn ?? ""),
+    how: b.how,
+    status: optText(b.status) as never,
+    contactEmail: optText(b.contactEmail),
+    contactName: optText(b.contactName),
+    notes: optText(b.notes),
+  }));
+
   // ---- replies and follow-ups ----
   // The dashboard reads the mailbox (read-only, with the login from the vault). The agent has no tool for any of this.
   route("GET", "/api/replies", () => ({

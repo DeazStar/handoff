@@ -126,3 +126,30 @@ describe("through prepare_application", () => {
     expect(JSON.parse(q.payload).differ).toBe(1);
   });
 });
+
+describe("sponsorship read from the work authorization text", async () => {
+  const { effectiveSponsorship } = await import("../src/index.js");
+  const e = (workAuthorization?: string, requiresSponsorship?: boolean) => effectiveSponsorship({ workAuthorization, requiresSponsorship });
+  it("reads a need, including the spelling a person actually types", () => {
+    expect(e("needs sponsership")).toEqual({ value: true, from: "work authorization text" });
+    expect(e("Needs visa sponsorship")).toEqual({ value: true, from: "work authorization text" });
+    expect(e("not authorized in the US, needs sponsorship")).toEqual({ value: true, from: "work authorization text" });
+    expect(e("I require a visa to be sponsored by the employer")).toEqual({ value: true, from: "work authorization text" });
+  });
+  it("reads an explicit no, and says nothing when the text does not say", () => {
+    expect(e("does not need sponsorship")?.value).toBe(false);
+    expect(e("authorized to work without sponsorship")?.value).toBe(false);
+    expect(e("no visa needed")?.value).toBe(false);
+    expect(e("citizen")).toBeUndefined();
+    expect(e(undefined)).toBeUndefined();
+    expect(e("")).toBeUndefined();
+  });
+  it("lets the setting win, and checks a form answer against the text when the setting is not said", () => {
+    expect(e("needs sponsership", false)).toEqual({ value: false, from: "setting" });
+    const p = { fullName: "Naod", links: [], languages: [], workAuthorization: "needs sponsership" };
+    expect(checkProfileAnswer("Will you require visa sponsorship?", "Yes", ["requiresSponsorship"], p)).toMatchObject({ check: "verified", note: expect.stringMatching(/work authorization text/) });
+    expect(checkProfileAnswer("Will you require visa sponsorship?", "No", ["requiresSponsorship"], p)).toMatchObject({ check: "differs" });
+    expect(resolveSources(["profile:requiresSponsorship"], "profile", { profile: p, standard: [] })).toMatchObject({ ok: true });
+    expect((resolveSources(["profile:requiresSponsorship"], "profile", { profile: { ...p, workAuthorization: "citizen" }, standard: [] }) as { problem: string }).problem).toMatch(/nothing saved/);
+  });
+});

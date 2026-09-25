@@ -35,6 +35,7 @@ export {
   prepareApplication, getApplication, listApplications, markApplicationSubmitted, discardApplication, listStandardAnswers, setStandardAnswer, deleteStandardAnswer,
   ANSWER_KINDS, type Application, type ApplicationRow, type AnswerInput, type PrepareInput, type StandardAnswer,
 } from "./application.js";
+export { effectiveSponsorship } from "./profile.js";
 export { PRIORITY_MODES, REMOTE_SCOPES, SPONSORSHIPS, priorityScore, type PriorityMode, type RemoteScope, type Sponsorship } from "./priority.js";
 export { importDirectory, listDirectory, directoryStats, domainOf, listScoutCompanies, setCompanyVerdict, VERDICTS, type Verdict, type DirectoryCompany, type DirectoryRow, type DirectoryFilter, type DirectoryStats, type ImportResult } from "./directory.js";
 export { collectYc, mapYcCompany, YC_HIRING_URL } from "./yc.js";
@@ -43,3 +44,4 @@ export { PROFILE_FIELDS, checkProfileAnswer, checkStandardAnswer, resolveSources
 export { prepareCover, coverMode, latestCover, coverText, getCoverMaterial, CoverProblems, COVER_LIMITS, type CoverPlan, type ResolvedCover } from "./cover.js";
 export { classifyMessage, matchMessage, ingestMessages, listMessages, newMessageCount, setMessageStatus, setMessageCategory, applyMessageOutcome, purgeOldSnippets, getSyncState, recordSync, dueFollowUps, scanFollowUps, draftFollowUp, getSyncTargets, CATEGORIES, type InboundMessage, type MessageRow, type Category, type MessageStatus, type IngestResult, type DueFollowUp, type ScanResult, type SyncState, type SyncTargets } from "./replies.js";
 export { verifyContactFromBrowser, MAX_BROWSER_QUOTE } from "./contactVerify.js";
+export { recordManualApplication, listTracker, MANUAL_STATUSES, type ManualApplication, type ManualStatus, type TrackerRow } from "./manual.js";

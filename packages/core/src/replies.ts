@@ -47,7 +47,8 @@ export function classifyMessage(m: Pick<InboundMessage, "fromAddr" | "subject" |
 }
 
 interface SentEmail {
-  emailId: number;
+  /** Null for an application the user made by hand: there is no email of ours, so only the sender can match. */
+  emailId: number | null;
   jobId: number;
   contactId: number;
   contactEmail: string;
@@ -65,6 +66,18 @@ function sentEmails(db: DB): SentEmail[] {
       )
       .all() as SentEmail[]
   ).map((r) => ({ ...r, messageId: normId(r.messageId), contactEmail: r.contactEmail.toLowerCase() }));
+}
+
+/** Applications the user made by email on their own: no message id to thread on, but the address they wrote to is known. */
+function manualSent(db: DB): SentEmail[] {
+  return (
+    db
+      .prepare(
+        `SELECT a.job_id AS jobId, a.contact_id AS contactId, c.email AS contactEmail, j.state AS state
+         FROM applications a JOIN jobs j ON j.id = a.job_id JOIN contacts c ON c.id = a.contact_id WHERE j.manual = 1 AND a.contact_id IS NOT NULL`,
+      )
+      .all() as { jobId: number; contactId: number; contactEmail: string; state: JobState }[]
+  ).map((r) => ({ emailId: null, jobId: r.jobId, contactId: r.contactId, contactEmail: r.contactEmail.toLowerCase(), messageId: "", state: r.state }));
 }
 
 export interface Match {
@@ -115,7 +128,7 @@ export function ingestMessages(db: DB, messages: InboundMessage[], actor: Actor)
   const prefs = getPreferences(db);
   const autoMark = prefs?.autoMarkReplied !== false;
   db.transaction(() => {
-    const sent = sentEmails(db);
+    const sent = [...sentEmails(db), ...manualSent(db)];
     const known = db.prepare("SELECT 1 FROM messages WHERE message_id = ?");
     const insert = db.prepare(
       `INSERT INTO messages (message_id, job_id, email_id, contact_id, from_addr, from_name, subject, received_at, snippet, category, matched_by)
@@ -269,8 +282,8 @@ export interface DueFollowUp {
   jobId: number;
   title: string;
   company?: string;
-  /** email: a follow-up can be drafted. portal: the application went through a form; check the site. */
-  route: "email" | "form";
+  /** email: a follow-up can be drafted. form: the application went through a form; check the site. manual: the user applied by hand; follow up yourself. */
+  route: "email" | "form" | "manual";
   daysSince: number;
   followUpsSent: number;
 }
@@ -285,14 +298,14 @@ export function dueFollowUps(db: DB, nowMs: number = Date.now()): DueFollowUp[] 
   const max = prefs?.maxFollowUps ?? 1;
   const jobs = db
     .prepare(
-      `SELECT j.id, j.title, c.name AS company, a.route, a.sent_at FROM jobs j JOIN applications a ON a.job_id = j.id
+      `SELECT j.id, j.title, j.manual, c.name AS company, a.route, a.sent_at FROM jobs j JOIN applications a ON a.job_id = j.id
        LEFT JOIN companies c ON c.id = j.company_id WHERE j.state = 'applied' AND a.sent_at IS NOT NULL`,
     )
-    .all() as { id: number; title: string; company: string | null; route: "email" | "form"; sent_at: string }[];
+    .all() as { id: number; title: string; manual: number; company: string | null; route: "email" | "form"; sent_at: string }[];
   const out: DueFollowUp[] = [];
   for (const j of jobs) {
     if (db.prepare("SELECT 1 FROM messages WHERE job_id = ? AND category IN ('reply','rejection','interview')").get(j.id)) continue;
-    if (j.route === "email") {
+    if (j.route === "email" && !j.manual) {
       if (max === 0) continue;
       if (db.prepare("SELECT 1 FROM emails WHERE job_id = ? AND kind = 'follow_up' AND status IN ('draft','sending')").get(j.id)) continue;
       const last = db.prepare("SELECT sent_at, kind, contact_id FROM emails WHERE job_id = ? AND status = 'sent' ORDER BY sent_at DESC, id DESC LIMIT 1").get(j.id) as { sent_at: string; contact_id: number } | undefined;
@@ -304,7 +317,7 @@ export function dueFollowUps(db: DB, nowMs: number = Date.now()): DueFollowUp[] 
     } else {
       const days = Math.floor((nowMs - parseTime(j.sent_at)) / DAY);
       const already = db.prepare("SELECT 1 FROM action_queue WHERE kind = 'follow_up' AND job_id = ? AND json_extract(payload, '$.reason') = 'portal'").get(j.id);
-      if (!already && days >= after) out.push({ jobId: j.id, title: j.title, company: j.company ?? undefined, route: "form", daysSince: days, followUpsSent: 0 });
+      if (!already && days >= after) out.push({ jobId: j.id, title: j.title, company: j.company ?? undefined, route: j.manual ? "manual" : "form", daysSince: days, followUpsSent: 0 });
     }
   }
   return out;
@@ -322,7 +335,7 @@ export function scanFollowUps(db: DB, actor: Actor = "system", nowMs: number = D
   db.transaction(() => {
     for (const d of dueFollowUps(db, nowMs)) {
       if (db.prepare("SELECT 1 FROM action_queue WHERE kind = 'follow_up' AND status = 'open' AND job_id = ?").get(d.jobId)) continue;
-      queueAction(db, "follow_up", d.jobId, { reason: d.route === "email" ? "no_reply" : "portal", days: d.daysSince }, actor);
+      queueAction(db, "follow_up", d.jobId, { reason: d.route === "email" ? "no_reply" : "portal", days: d.daysSince, byHand: d.route === "manual" }, actor);
       result.queued++;
     }
     const quiet = prefs?.noResponseDays ?? 21;
@@ -414,6 +427,10 @@ export function getSyncTargets(db: DB, nowMs: number = Date.now()): SyncTargets 
   for (const r of rows) {
     const d = domainOf(r.email);
     senders.add(FREE_MAIL.has(d) ? r.email.toLowerCase() : d);
+  }
+  for (const m of manualSent(db)) {
+    const d = domainOf(m.contactEmail);
+    senders.add(FREE_MAIL.has(d) ? m.contactEmail : d);
   }
   return { messageIds: [...new Set(rows.map((r) => normId(r.messageId)))], senders: [...senders], since };
 }

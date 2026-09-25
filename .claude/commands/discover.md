@@ -12,6 +12,8 @@ Run one discovery pass using the jobhunt tools. Search, verify and record only. 
 3. Search the live web, never your memory. Always search the sources with addedBy "user" and enabled true. If `searchAnySite` is true, also search the web for companies hiring and open their own career pages. If it is false, use only those listed sources, and if there are none, say "No sites to search: turn on Search any site or add a site in Settings" and stop.
 
 ## Finding candidates
+**Cookie banners:** when one covers a page you open, close it first as the server instructions say (read `cookieBanners` from `get_preferences`: accept everything for `accept`, only the necessary ones for `necessary`). Then read the page.
+
 Start from web-search results and the user's listed boards. Do not name companies from memory, and do not probe company job-board APIs (Greenhouse, Lever, Ashby and similar). Open pages with the browser, which renders JavaScript; plain fetching cannot read many career pages. Only real job pages count toward the page cap below.
 Prefer the company's own application page (its careers site, or the application page it hosts anywhere) over any board or aggregator listing. If a board listing links to the company's page, use the company's page. Skip aggregators that only repost other listings; log them with reason repost.
 

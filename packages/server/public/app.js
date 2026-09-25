@@ -123,7 +123,7 @@ function actionCard(a) {
     }
     return h("div", { class: "card" },
       h("div", { class: "row" }, h("span", { class: "badge" }, "check the portal"), jobLink(a)),
-      h("div", { class: "muted" }, `You applied through a form ${a.payload.days} days ago. Look at the company's site or your email for news.`),
+      h("div", { class: "muted" }, `You applied ${a.payload.days} days ago${a.payload.byHand ? " by hand" : " through a form"} and nothing has come back. Look at the company's site or your email for news.`),
       h("div", { class: "row", style: "margin-top:8px" }, dismiss));
   }
   const details = Object.entries(a.payload || {}).map(([k, v]) =>
@@ -717,7 +717,7 @@ async function repliesView() {
       h("div", { class: "row" }, h("a", { href: `#/jobs/${x.jobId}` }, `${x.title}${x.company ? `, ${x.company}` : ""}`), h("span", { class: "muted" }, `${x.daysSince} days`)),
       x.route === "email"
         ? h("button", { onclick: async () => { try { const r = await api("POST", `/api/jobs/${x.jobId}/follow-up`, {}); location.hash = `#/emails/${r.emailId}`; } catch (e) { showError(e); } } }, "Draft a follow-up")
-        : h("div", { class: "muted" }, "Applied through a form: check the company's site."))));
+        : h("div", { class: "muted" }, x.route === "manual" ? "You applied by hand: follow up yourself." : "Applied through a form: check the company's site."))));
   }
 
   const counts = (s) => d.messages.filter((m) => m.status === s).length;
@@ -726,6 +726,59 @@ async function repliesView() {
   const shown = d.messages.filter((m) => m.status === tab);
   if (!shown.length) view.append(h("div", { class: "empty" }, tab === "new" ? (d.sync.lastRunAt ? "No new replies." : "Press Check replies to look for answers.") : "Nothing here."));
   shown.forEach((m) => view.append(messageCard(m, repliesView)));
+}
+
+const TRACK_STATES = [["applied", "Applied"], ["replied", "Replied"], ["interview", "Interview"], ["offer", "Offer"], ["rejected", "Rejected"], ["no_response", "No response"]];
+
+function manualApplicationForm(refresh) {
+  const title = textField("Job title");
+  const company = textField("Company");
+  const url = textField("Link to the posting (optional)", "", { placeholder: "https://..." });
+  const date = textField("Day you applied", new Date().toLocaleDateString("sv-SE"), { type: "date" });
+  const how = h("select", {}, [["form", "Through a website or form"], ["email", "By email"]].map(([v, t]) => h("option", { value: v }, t)));
+  const status = h("select", {}, TRACK_STATES.map(([v, t]) => h("option", { value: v }, t)));
+  const contact = textField("Who it went to, if by email (optional)", "", { placeholder: "name@company.com" });
+  const notes = textField("Notes (optional)", "", { placeholder: "e.g. referred by Sam, applied on their site" });
+  return h("div", { class: "card" },
+    h("h2", {}, "Add an application I made myself"),
+    h("div", { class: "muted" }, "Record jobs you applied for by hand, for example before you used this tool. They are never found or applied for twice, and replies from the address you give are matched."),
+    h("div", { class: "row" }, title.el, company.el),
+    h("div", { class: "row" }, url.el, date.el),
+    h("div", { class: "row" }, h("div", { class: "field" }, h("label", {}, "How you applied"), how), h("div", { class: "field" }, h("label", {}, "Where it stands now"), status), contact.el),
+    notes.el,
+    h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "primary", onclick: act(async () => {
+      await api("POST", "/api/tracker", { title: title.get(), company: company.get(), url: url.get(), appliedOn: date.get(), how: how.value, status: status.value, contactEmail: contact.get(), notes: notes.get() });
+      showNote("Recorded.");
+      await refresh();
+    }) }, "Add to the tracker")));
+}
+
+async function trackerView() {
+  const rows = await api("GET", "/api/tracker");
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  const only = params.get("by") === "hand";
+  view.replaceChildren(h("h1", {}, `Tracker (${rows.length})`),
+    h("p", { class: "muted" }, "Every application that has gone out: sent by this tool, or recorded by you."),
+    manualApplicationForm(trackerView));
+  const count = (s) => rows.filter((r) => r.state === s).length;
+  view.append(h("p", { class: "muted" }, TRACK_STATES.map(([v, t]) => `${t} ${count(v)}`).join("  ·  ")));
+  const byHand = h("input", { type: "checkbox" });
+  byHand.checked = only;
+  byHand.addEventListener("change", () => { location.hash = `#/tracker${byHand.checked ? "?by=hand" : ""}`; });
+  view.append(h("div", { class: "row" }, h("label", {}, byHand, " only the ones I applied for by hand")));
+  const shown = rows.filter((r) => !only || r.manual);
+  if (!shown.length) { view.append(h("div", { class: "empty" }, only ? "None recorded by hand yet." : "Nothing has gone out yet.")); return; }
+  view.append(h("table", {}, shown.map((r) => {
+    const move = r.allowed.length ? h("select", {}, h("option", { value: "" }, "Change status..."), r.allowed.map((s) => h("option", { value: s }, label(s)))) : null;
+    if (move) move.addEventListener("change", act(async () => { if (move.value) { await api("POST", `/api/jobs/${r.jobId}/transition`, { to: move.value }); await trackerView(); } }));
+    return h("tr", {},
+      h("td", {}, h("a", { href: `#/jobs/${r.jobId}` }, r.title), h("span", { class: "muted" }, `  #${r.jobId}`), h("div", { class: "muted" }, r.company || ""),
+        r.notes && h("div", { class: "muted" }, r.notes)),
+      h("td", { class: "muted" }, r.appliedAt.slice(0, 10), h("div", {}, `${r.daysSince} day${r.daysSince === 1 ? "" : "s"} ago`)),
+      h("td", {}, h("span", { class: "badge" }, r.route === "email" ? "email" : "website"), r.manual ? h("span", { class: "badge" }, "by hand") : null),
+      h("td", {}, h("span", { class: "badge" }, label(r.state)), r.newReplies ? h("a", { href: "#/replies" }, `  ${r.newReplies} new repl${r.newReplies === 1 ? "y" : "ies"}`) : null),
+      h("td", {}, move));
+  })));
 }
 
 async function emailsView() {
@@ -955,6 +1008,8 @@ async function settingsView() {
   const coverGuidance = h("textarea", { placeholder: "e.g. Warm but direct. Lead with my payments work. Never longer than three paragraphs." });
   coverGuidance.value = p.coverGuidance || "";
 
+  const cookieBanners = h("select", {}, [["accept", "Accept all cookies, so pages are not blocked"], ["necessary", "Allow only the strictly necessary cookies"]].map(([v, t]) => h("option", { value: v }, t)));
+  cookieBanners.value = p.cookieBanners || "accept";
   const autoReplied = h("input", { type: "checkbox" });
   autoReplied.checked = p.autoMarkReplied !== false;
   const followDays = textField("Suggest a follow-up after (days with no reply)", String(p.followUpDays ?? 7));
@@ -973,6 +1028,7 @@ async function settingsView() {
     cvGuidance: guidance.value,
     coverLetters: coverLetters.value,
     coverGuidance: coverGuidance.value,
+    cookieBanners: cookieBanners.value,
     autoMarkReplied: autoReplied.checked,
     followUpDays: Number(followDays.get()),
     maxFollowUps: Number(followMax.get()),
@@ -1008,6 +1064,8 @@ async function settingsView() {
       h("div", { class: "field" }, h("label", {}, "Cover letters"), coverLetters,
         h("div", { class: "muted" }, "When on, the agent writes one for each email job (attached with your CV) and for any form that has a cover letter field. Every claim must rest on your facts.")),
       h("div", { class: "field" }, h("label", {}, "How my cover letters should read"), coverGuidance),
+      h("div", { class: "field" }, h("label", {}, "Cookie banners on the sites the agent visits"), cookieBanners,
+        h("div", { class: "muted" }, "Accepting cookies lets pages load without a banner in the way. This is only about cookies: it never ticks the consent boxes inside an application form.")),
       h("h2", {}, "Replies and follow-ups"),
       h("div", { class: "field" }, h("label", {}, autoReplied, " When someone answers an email of mine directly (same thread), move the job to replied by itself"),
         h("div", { class: "muted" }, "Other matches are only suggested. A rejection or an interview is always your decision.")),
@@ -1064,7 +1122,9 @@ async function settingsView() {
     h("h2", {}, "About you"),
     h("div", { class: "card" }, name2.el, email.el, phone.el, loc.el, links.el, auth.el,
       h("div", { class: "field" }, h("label", {}, "Do you need a visa sponsored?"), sponsor,
-        h("div", { class: "muted" }, "Forms ask this. The agent answers from this setting, and leaves the question blank if it is not said.")),
+        h("div", { class: "muted" }, profile?.inferredSponsorship
+          ? `Not said yet, but your work authorization text says you ${profile.inferredSponsorship.value ? "need" : "do not need"} sponsorship, so forms are answered ${profile.inferredSponsorship.value ? "Yes" : "No"}. Pick it here to make it exact.`
+          : "Forms ask this. The agent answers from this setting, and leaves the question blank if it is not said.")),
       notice.el, langs.el,
       h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "primary", onclick: act(() => api("PUT", "/api/profile", {
         fullName: name2.get(), email: email.get(), phone: phone.get(), location: loc.get(), links: list(links),
@@ -1091,6 +1151,7 @@ async function render() {
     else if (page === "applications") await (arg ? applicationView(Number(arg)) : applicationsView());
     else if (page === "emails") await (arg ? emailView(Number(arg)) : emailsView());
     else if (page === "replies") await repliesView();
+    else if (page === "tracker") await trackerView();
     else if (page === "companies") await companiesView();
     else if (page === "vault") await vaultView();
     else if (page === "settings") await settingsView();
@@ -1103,6 +1164,7 @@ async function render() {
   nav.replaceChildren(
     h("a", { href: "#/", class: !page ? "active" : "" }, `Needs you${queueCount ? ` (${queueCount})` : ""}`),
     h("a", { href: "#/pipeline", class: page === "pipeline" || page === "jobs" ? "active" : "" }, "Pipeline"),
+    h("a", { href: "#/tracker", class: page === "tracker" ? "active" : "" }, "Tracker"),
     h("a", { href: "#/cv", class: page === "cv" ? "active" : "" }, "CV"),
     h("a", { href: "#/facts", class: page === "facts" ? "active" : "" }, "Facts"),
     h("a", { href: "#/companies", class: page === "companies" ? "active" : "" }, "Companies"),

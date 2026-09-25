@@ -14,6 +14,7 @@ import { addCandidateJob, logEvent, transitionJob, type NewJob } from "./jobs.js
 import { getPreferences, getProfile, setPreferences, setProfile, type Preferences, type Profile } from "./profile.js";
 import { directoryStats, importDirectory, listDirectory, listScoutCompanies, setCompanyVerdict, type DirectoryCompany, type DirectoryFilter, type Verdict } from "./directory.js";
 import { setCareersPage } from "./careers.js";
+import { listTracker, recordManualApplication, type ManualApplication } from "./manual.js";
 import { applyMessageOutcome, draftFollowUp, dueFollowUps, getSyncState, listMessages, newMessageCount, setMessageCategory, setMessageStatus, type Category, type MessageStatus } from "./replies.js";
 import { coverMode, getCoverMaterial, latestCover, prepareCover, type CoverPlan } from "./cover.js";
 import { listActionsDetailed, listJobs, getJob, sourceStats } from "./queries.js";
@@ -151,6 +152,9 @@ export function createHumanApi(db: DB) {
     checkLinks: (urls: string[]) => checkLinks(db, urls),
     directoryStats: () => directoryStats(db),
     importDirectory: (rows: DirectoryCompany[]) => importDirectory(db, rows, "human"),
+    // The tracker: applications made by hand, and everything that has gone out.
+    recordManualApplication: (m: ManualApplication) => recordManualApplication(db, m, "human"),
+    listTracker: () => listTracker(db),
     // Replies and follow-ups. The dashboard reads the mailbox itself; the agent cannot.
     listMessages: (opts?: { status?: MessageStatus; jobId?: number }) => listMessages(db, opts),
     newMessageCount: () => newMessageCount(db),

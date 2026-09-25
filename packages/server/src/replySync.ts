@@ -20,10 +20,10 @@ export function createReplySync(db: DB, reader: ImapReader): ReplySync {
       running = true;
       try {
         const targets = getSyncTargets(db);
-        if (targets.messageIds.length === 0) {
+        if (targets.messageIds.length === 0 && targets.senders.length === 0) {
           recordSync(db, { checked: 0, matched: 0 });
           scanFollowUps(db, "system");
-          return { checked: 0, matched: 0, replies: 0, bounces: 0, movedToReplied: 0, skipped: "No email has been sent yet, so there is nothing to look for." };
+          return { checked: 0, matched: 0, replies: 0, bounces: 0, movedToReplied: 0, skipped: "No email has been sent and no email application recorded yet, so there is nothing to look for." };
         }
         let messages;
         try {

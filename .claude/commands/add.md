@@ -17,6 +17,8 @@ Arguments: `$ARGUMENTS`
 2. `get_preferences` and `get_profile`, so you can score and read the remote scope and sponsorship the way `discover.md` step 2 describes.
 
 ## For each link, finish one before starting the next
+**Cookie banners:** when one covers a page you open, close it first as the server instructions say (read `cookieBanners` from `get_preferences`: accept everything for `accept`, only the necessary ones for `necessary`). Then read the page.
+
 1. `check_candidate` with the link.
    - **Already a job, state `matched` or later:** say "already have it (id N, state S)" and do not open it. If you were told `go` and its state is `matched` or `materials_ready`, it joins the chain below.
    - **Already a job, but still `found` or `verified_live`** (it was added but never opened or scored): do not add it again. Open it and do steps 2 and 4 to 6 below for that job id, so it gets verified, routed and scored.

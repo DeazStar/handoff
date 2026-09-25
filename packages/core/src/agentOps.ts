@@ -160,7 +160,7 @@ export function discoveryBudget(db: DB): { limit: number; addedToday: number; re
     (db.prepare("SELECT daily_discovery_limit AS n FROM preferences WHERE id = 1").get() as { n: number } | undefined)?.n ?? 10;
   const addedToday = (
     db
-      .prepare("SELECT COUNT(*) AS n FROM jobs WHERE user_provided = 0 AND date(found_at, 'localtime') = date('now', 'localtime')")
+      .prepare("SELECT COUNT(*) AS n FROM jobs WHERE user_provided = 0 AND manual = 0 AND date(found_at, 'localtime') = date('now', 'localtime')")
       .get() as { n: number }
   ).n;
   return { limit, addedToday, remaining: Math.max(0, limit - addedToday) };

@@ -1,4 +1,4 @@
-import type { Profile } from "./profile.js";
+import { effectiveSponsorship, type Profile } from "./profile.js";
 import type { StandardAnswer } from "./application.js";
 
 /** Where an answer can come from. The agent names the source; the server checks that it exists and whether the answer follows from it. */
@@ -61,7 +61,7 @@ function profileValues(p: Profile, field: ProfileField): string[] {
     case "languages": return [...p.languages, p.languages.join(", ")].filter(has);
     case "workAuthorization": return has(p.workAuthorization) ? [p.workAuthorization] : [];
     case "noticePeriod": return has(p.noticePeriod) ? [p.noticePeriod] : [];
-    case "requiresSponsorship": return p.requiresSponsorship === undefined ? [] : [p.requiresSponsorship ? "yes" : "no"];
+    case "requiresSponsorship": { const e = effectiveSponsorship(p); return e === undefined ? [] : [e.value ? "yes" : "no"]; }
   }
 }
 
@@ -102,8 +102,9 @@ export function checkProfileAnswer(question: string, answer: string, fields: Pro
       if (!/sponsor/i.test(question)) { unchecked = "This question is not about sponsorship, so your sponsorship setting cannot confirm the answer"; continue; }
       const given = yesNo(answer);
       if (given === undefined) { unchecked = "The answer is not a clear yes or no"; continue; }
-      if (given === p.requiresSponsorship) return { check: "verified" };
-      return { check: "differs", note: `Your profile says you ${p.requiresSponsorship ? "need" : "do not need"} sponsorship` };
+      const eff = effectiveSponsorship(p)!;
+      if (given === eff.value) return { check: "verified", note: eff.from === "setting" ? undefined : "From your work authorization text; set the sponsorship setting to make it exact" };
+      return { check: "differs", note: `Your profile says you ${eff.value ? "need" : "do not need"} sponsorship (from your ${eff.from})` };
     }
     for (const v of profileValues(p, field)) {
       if (field === "phone") {

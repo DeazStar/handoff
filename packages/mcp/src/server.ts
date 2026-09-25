@@ -13,6 +13,7 @@ import {
   hashDescription,
   derivePatternContact,
   verifyContact,
+  effectiveSponsorship,
   verifyContactFromBrowser,
   MAX_BROWSER_QUOTE,
   verifyPerson,
@@ -47,6 +48,9 @@ const INSTRUCTIONS = `You are helping one user find and prepare job applications
 - For a form application: fill the form yourself in the browser from get_application_material, upload the CV file it names, leave the tab open on the filled form, and record what you entered with prepare_application. Never click the final submit button, never enter a password, never solve a CAPTCHA, and leave demographic, consent and signature questions blank for the user. The user checks the form and submits it.
 - A cover letter goes with every email job (cover letters are on by default; the user can turn them off) and with any form that has a cover letter field. Call get_cover_material, then save_cover_letter with only the body paragraphs; the server adds the rest and draws a one-page PDF.
 - The user can give you job links with the /add command. Add them with add_candidate_job and userProvided true: they use their own daily allowance, not the discovery limit. Low-scoring links are still added, with the weakness stated in the reason.
+- Cookie banners are in the way, not part of the task. When a cookie or consent overlay appears on a site you visit, deal with it at once, before reading or filling anything: read cookieBanners from get_preferences. accept: click the button that accepts everything ("Accept all", "Allow all", "Accept cookies", "I agree", "OK"). necessary: click "Reject all", "Only necessary" or "Strictly necessary", or save the choices with every optional switch off. Look for the button in the page snapshot; it may be inside an iframe or at the bottom of a long overlay, and "Escape" or scrolling can bring it forward. Try up to three times, and if the page still cannot be used, say so. This concerns cookies only: the consent boxes inside an application form follow the form rules and the user's consent word, not this setting.
+- A form question that asks for a specific personal story the user's facts do not contain is never invented: answer as far as the facts go, and file a gap with report_gap so the user can write the true story and run the form again. A choice that states a fact about the user (where they are located, their age, their work eligibility) is answered from the profile and is not a consent.
+- A CAPTCHA that is part of a form is not a reason to leave the form unfilled: fill everything else, never touch the CAPTCHA, and list it for the user.
 - Never invent facts about the user. Use list_facts. If a job asks for something no fact supports, call report_gap.`;
 
 type Result = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -412,7 +416,7 @@ export function createMcpServer(
       const prefs = agent.getPreferences();
       return {
         job: { id: d.job.id, title: d.job.title, company: d.job.company, url: d.job.url, applyUrl: d.job.applyUrl, route: d.job.route, state: d.job.state },
-        profile,
+        profile: { ...profile, requiresSponsorship: effectiveSponsorship(profile)?.value, requiresSponsorshipFrom: effectiveSponsorship(profile)?.from },
         salary: { floor: prefs?.salaryFloor, target: prefs?.salaryTarget, ceiling: prefs?.salaryCeiling, currency: prefs?.currency, period: prefs?.salaryPeriod },
         standardAnswers: agent.listStandardAnswers(),
         cvUpload: upload ?? "No CV yet. Run the tailoring first",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addFact, coverMode, createAgentApi, createHumanApi, getEmail, getCoverMaterial, openDb, prepareCover, saveDocument, setPreferences, setProfile,
+  getPreferences as getPreferencesFor, addFact, coverMode, createAgentApi, createHumanApi, getEmail, getCoverMaterial, openDb, prepareCover, saveDocument, setPreferences, setProfile,
   type CoverPlan,
 } from "../src/index.js";
 
@@ -157,5 +157,15 @@ describe("a cover letter on a form", () => {
     expect(throws(() => f.prepare([{ question: "Cover letter", answer: "uploaded x.pdf", kind: "cover_letter" }]))).toMatch(/documentId/);
     f.prepare([{ question: "Cover letter", answer: "Dear team, hire me please.", kind: "cover_letter", documentId: f.cover.id }]);
     expect(f.agent.getApplication(f.jobId)!.answers[0]).toMatchObject({ check: "differs", checkNote: expect.stringMatching(/not the saved cover letter/) });
+  });
+});
+
+describe("cookie banner setting", () => {
+  it("defaults to accepting, can be set to necessary only, and refuses anything else", () => {
+    const s = setup();
+    expect(getPreferencesFor(s.db)?.cookieBanners).toBe("accept");
+    setPreferences(s.db, prefs({ cookieBanners: "necessary" }), H);
+    expect(getPreferencesFor(s.db)?.cookieBanners).toBe("necessary");
+    expect(throws(() => setPreferences(s.db, prefs({ cookieBanners: "everything" as never }), H))).toMatch(/accept or necessary/);
   });
 });

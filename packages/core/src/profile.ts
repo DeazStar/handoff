@@ -54,6 +54,8 @@ export interface Preferences {
   replySnippetDays?: number;
   /** Check the mailbox for replies this often while the dashboard is open and the vault unlocked. 0 means only when asked. Default 0. */
   replyCheckMinutes?: number;
+  /** How the agent answers a cookie banner on a site it visits. accept: click "Accept all" so the page is not blocked. necessary: only strictly necessary cookies. Default accept. */
+  cookieBanners?: "accept" | "necessary";
   /** auto: a cover letter for every email job and for forms that ask. off: none. Default auto. */
   coverLetters?: "auto" | "off";
   /** Free text about how cover letters should read, e.g. tone and what to lead with. */
@@ -162,6 +164,7 @@ export function getPreferences(db: DB): Preferences | null {
     consentDefault: r.consent_default,
     priorityMode: r.priority_mode,
     coverLetters: r.cover_letters,
+    cookieBanners: r.cookie_banners,
     autoMarkReplied: r.auto_mark_replied === 1,
     followUpDays: r.follow_up_days,
     maxFollowUps: r.max_follow_ups,
@@ -208,6 +211,7 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
   whole(p.replySnippetDays, "Keep reply text for (days)", 1, 3650);
   whole(p.replyCheckMinutes, "Check replies every (minutes)", 0, 1440);
   if (p.noResponseDays !== undefined && p.noResponseDays !== 0 && p.followUpDays !== undefined && p.noResponseDays < p.followUpDays) throw new Error("No response after must be later than follow up after");
+  if (p.cookieBanners !== undefined && !["accept", "necessary"].includes(p.cookieBanners)) throw new Error("cookieBanners must be accept or necessary");
   const bs = p.batchSize ?? 10;
   if (!Number.isInteger(bs) || bs < 1 || bs > 20) throw new Error("batchSize must be a whole number from 1 to 20");
   const types = dedupeList(p.employmentPriority ?? []).map((t) => t.toLowerCase());
@@ -215,15 +219,15 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
   if (bad) throw new Error(`Employment priority can list full_time, part_time, contract and freelance, not "${bad}"`);
   db.prepare(
     `INSERT INTO preferences (id, roles, seniority, locations, remote_policy, industries, exclusions,
-       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit, search_any_site, cv_guidance, country_priority, employment_priority, bcc_self, research_min_score, research_scope, batch_size, salary_period, consent_default, priority_mode, cover_letters, cover_guidance, auto_mark_replied, follow_up_days, max_follow_ups, no_response_days, reply_snippet_days, reply_check_minutes)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit, search_any_site, cv_guidance, country_priority, employment_priority, bcc_self, research_min_score, research_scope, batch_size, salary_period, consent_default, priority_mode, cover_letters, cover_guidance, cookie_banners, auto_mark_replied, follow_up_days, max_follow_ups, no_response_days, reply_snippet_days, reply_check_minutes)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        roles = excluded.roles, seniority = excluded.seniority, locations = excluded.locations,
        remote_policy = excluded.remote_policy, industries = excluded.industries,
        exclusions = excluded.exclusions, salary_floor = excluded.salary_floor,
        salary_target = excluded.salary_target, salary_ceiling = excluded.salary_ceiling,
        currency = excluded.currency, daily_application_limit = excluded.daily_application_limit,
-       daily_discovery_limit = excluded.daily_discovery_limit, search_any_site = excluded.search_any_site, cv_guidance = excluded.cv_guidance, country_priority = excluded.country_priority, employment_priority = excluded.employment_priority, bcc_self = excluded.bcc_self, research_min_score = excluded.research_min_score, research_scope = excluded.research_scope, batch_size = excluded.batch_size, salary_period = excluded.salary_period, consent_default = excluded.consent_default, priority_mode = excluded.priority_mode, cover_letters = excluded.cover_letters, cover_guidance = excluded.cover_guidance, auto_mark_replied = excluded.auto_mark_replied, follow_up_days = excluded.follow_up_days, max_follow_ups = excluded.max_follow_ups, no_response_days = excluded.no_response_days, reply_snippet_days = excluded.reply_snippet_days, reply_check_minutes = excluded.reply_check_minutes,
+       daily_discovery_limit = excluded.daily_discovery_limit, search_any_site = excluded.search_any_site, cv_guidance = excluded.cv_guidance, country_priority = excluded.country_priority, employment_priority = excluded.employment_priority, bcc_self = excluded.bcc_self, research_min_score = excluded.research_min_score, research_scope = excluded.research_scope, batch_size = excluded.batch_size, salary_period = excluded.salary_period, consent_default = excluded.consent_default, priority_mode = excluded.priority_mode, cover_letters = excluded.cover_letters, cookie_banners = excluded.cookie_banners, cover_guidance = excluded.cover_guidance, auto_mark_replied = excluded.auto_mark_replied, follow_up_days = excluded.follow_up_days, max_follow_ups = excluded.max_follow_ups, no_response_days = excluded.no_response_days, reply_snippet_days = excluded.reply_snippet_days, reply_check_minutes = excluded.reply_check_minutes,
        updated_at = datetime('now')`,
   ).run(
     JSON.stringify(p.roles),
@@ -251,6 +255,7 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
     p.priorityMode ?? "remote_first",
     p.coverLetters ?? "auto",
     p.coverGuidance?.trim() || null,
+    p.cookieBanners ?? "accept",
     p.autoMarkReplied === false ? 0 : 1,
     p.followUpDays ?? 7,
     p.maxFollowUps ?? 1,
@@ -259,4 +264,16 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
     p.replyCheckMinutes ?? 0,
   );
   logEvent(db, actor, "preferences_updated", null);
+}
+
+/**
+ * Whether the user needs a visa sponsored. The setting wins. When it is not set, the work authorization text is read: "needs sponsorship"
+ * means yes, "no sponsorship needed" means no, anything else is not said. The answer says where it came from.
+ */
+export function effectiveSponsorship(p: Pick<Profile, "requiresSponsorship" | "workAuthorization">): { value: boolean; from: "setting" | "work authorization text" } | undefined {
+  if (p.requiresSponsorship !== undefined) return { value: p.requiresSponsorship, from: "setting" };
+  const t = (p.workAuthorization ?? "").toLowerCase();
+  if (/\b(no|not|without|doesn'?t|don'?t)\s+(?:\w+\s+){0,2}(?:need|require)\w*/.test(t) || /\b(no|without)\s+(?:visa\s+)?spons/.test(t)) return { value: false, from: "work authorization text" };
+  if (/\b(need|needs|needing|require|requires|requiring)\b[^.;]{0,30}\bspons/.test(t)) return { value: true, from: "work authorization text" };
+  return undefined;
 }

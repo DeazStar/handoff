@@ -76,3 +76,16 @@ describe("checking a pasted list", () => {
     expect(r[4]!.ok).toBe(false);
   });
 });
+
+describe("what the agent is told", () => {
+  it("knows how to deal with a cookie banner and that a form's CAPTCHA does not stop it filling", () => {
+    const text = client.getInstructions() ?? "";
+    expect(text).toMatch(/Cookie banners are in the way/);
+    expect(text).toMatch(/cookieBanners/);
+    expect(text).toMatch(/Accept all/);
+    expect(text).toMatch(/only about cookies|concerns cookies only/);
+    expect(text).toMatch(/CAPTCHA that is part of a form is not a reason to leave the form unfilled/);
+    expect(text).toMatch(/personal story the user.s facts do not contain is never invented/);
+    expect(text).toMatch(/report_gap so the user can write the true story/);
+  });
+});

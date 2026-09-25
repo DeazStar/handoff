@@ -566,4 +566,19 @@ ALTER TABLE preferences ADD COLUMN salary_period TEXT CHECK (salary_period IN ('
     // A job added from a link the user gave. It does not use the discovery limit; a separate daily allowance applies.
     sql: `ALTER TABLE jobs ADD COLUMN user_provided INTEGER NOT NULL DEFAULT 0;`,
   },
+  {
+    id: 25,
+    name: "cookie_banners",
+    // How the agent answers a cookie banner on a site it visits: accept (so the page is not blocked) or necessary (strictly necessary only).
+    sql: `ALTER TABLE preferences ADD COLUMN cookie_banners TEXT NOT NULL DEFAULT 'accept' CHECK (cookie_banners IN ('accept','necessary'));`,
+  },
+  {
+    id: 26,
+    name: "manual_applications",
+    // jobs.manual: the user applied by hand and recorded it; it uses no discovery limit. applications.contact_id: who a manual email went to.
+    sql: `
+      ALTER TABLE jobs ADD COLUMN manual INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE applications ADD COLUMN contact_id INTEGER REFERENCES contacts(id);
+    `,
+  },
 ];
