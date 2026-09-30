@@ -194,4 +194,33 @@ FROM sources s LEFT JOIN jobs j ON j.source_id = s.id
 GROUP BY s.id;
 `,
   },
+  {
+    id: 2,
+    name: "job_state_guard",
+    // SQLite has no session variables, so transitionJob announces the change it is about
+    // to make in this one-row table and the triggers refuse any state change that was not
+    // announced. This stops accidental direct UPDATEs; it is not a defence against code
+    // that deliberately writes to the guard table.
+    sql: `
+CREATE TABLE transition_guard (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  job_id INTEGER,
+  to_state TEXT
+);
+INSERT INTO transition_guard (id) VALUES (1);
+
+CREATE TRIGGER jobs_state_insert_guard BEFORE INSERT ON jobs
+WHEN NEW.state != 'found'
+BEGIN SELECT RAISE(ABORT, 'jobs must be created in state found'); END;
+
+CREATE TRIGGER jobs_state_update_guard BEFORE UPDATE OF state ON jobs
+WHEN NEW.state IS NOT OLD.state
+BEGIN
+  SELECT RAISE(ABORT, 'job state can only change through transitionJob')
+  WHERE NOT EXISTS (
+    SELECT 1 FROM transition_guard WHERE job_id = OLD.id AND to_state = NEW.state
+  );
+END;
+`,
+  },
 ];

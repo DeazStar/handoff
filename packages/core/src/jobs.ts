@@ -74,11 +74,13 @@ export function transitionJob(
       | undefined;
     if (!row) throw new Error(`Job ${jobId} not found`);
     assertTransition(row.state, to, actor);
+    db.prepare("UPDATE transition_guard SET job_id = ?, to_state = ?").run(jobId, to);
     db.prepare("UPDATE jobs SET state = ?, state_reason = ?, updated_at = datetime('now') WHERE id = ?").run(
       to,
       reason ?? null,
       jobId,
     );
+    db.prepare("UPDATE transition_guard SET job_id = NULL, to_state = NULL").run();
     logEvent(db, actor, "state_changed", jobId, { from: row.state, to, reason });
   })();
 }
