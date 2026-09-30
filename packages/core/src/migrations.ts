@@ -1,0 +1,197 @@
+export interface Migration {
+  id: number;
+  name: string;
+  sql: string;
+}
+
+export const migrations: Migration[] = [
+  {
+    id: 1,
+    name: "init",
+    sql: `
+CREATE TABLE profile (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  full_name TEXT NOT NULL,
+  email TEXT,
+  phone TEXT,
+  location TEXT,
+  links TEXT NOT NULL DEFAULT '[]',
+  work_authorization TEXT,
+  notice_period TEXT,
+  languages TEXT NOT NULL DEFAULT '[]',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE facts (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('experience','skill','achievement','education','cert')),
+  text TEXT NOT NULL,
+  date_range TEXT,
+  tags TEXT NOT NULL DEFAULT '[]',
+  source_note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE preferences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  roles TEXT NOT NULL DEFAULT '[]',
+  seniority TEXT NOT NULL DEFAULT '[]',
+  locations TEXT NOT NULL DEFAULT '[]',
+  remote_policy TEXT NOT NULL DEFAULT 'any' CHECK (remote_policy IN ('any','remote','onsite','hybrid')),
+  industries TEXT NOT NULL DEFAULT '[]',
+  exclusions TEXT NOT NULL DEFAULT '[]',
+  salary_floor INTEGER,
+  salary_target INTEGER,
+  salary_ceiling INTEGER,
+  currency TEXT,
+  daily_application_limit INTEGER NOT NULL DEFAULT 5,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE companies (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  domain TEXT UNIQUE,
+  careers_url TEXT,
+  notes TEXT,
+  discovered_via TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE sources (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('google','jobsite','careers_page','email_contact')),
+  name TEXT NOT NULL,
+  url TEXT,
+  added_by TEXT NOT NULL DEFAULT 'user' CHECK (added_by IN ('user','agent')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (kind, name)
+);
+
+CREATE TABLE jobs (
+  id INTEGER PRIMARY KEY,
+  company_id INTEGER REFERENCES companies(id),
+  source_id INTEGER REFERENCES sources(id),
+  title TEXT NOT NULL,
+  url TEXT NOT NULL,
+  canonical_url TEXT NOT NULL UNIQUE,
+  location TEXT,
+  remote INTEGER,
+  posted_at TEXT,
+  found_at TEXT NOT NULL DEFAULT (datetime('now')),
+  description_hash TEXT,
+  match_score REAL,
+  match_reason TEXT,
+  state TEXT NOT NULL DEFAULT 'found',
+  state_reason TEXT,
+  route TEXT NOT NULL DEFAULT 'none' CHECK (route IN ('form','email','none')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_jobs_state ON jobs(state);
+CREATE INDEX idx_jobs_desc_hash ON jobs(description_hash);
+
+CREATE TABLE verifications (
+  id INTEGER PRIMARY KEY,
+  job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  checked_at TEXT NOT NULL DEFAULT (datetime('now')),
+  http_status INTEGER,
+  title_matches INTEGER,
+  apply_path_found INTEGER,
+  result TEXT NOT NULL CHECK (result IN ('live','dead','unclear')),
+  evidence TEXT
+);
+
+CREATE TABLE documents (
+  id INTEGER PRIMARY KEY,
+  job_id INTEGER REFERENCES jobs(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('cv','cover','email')),
+  version INTEGER NOT NULL DEFAULT 1,
+  path TEXT NOT NULL,
+  fact_ids_used TEXT NOT NULL DEFAULT '[]',
+  generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE applications (
+  id INTEGER PRIMARY KEY,
+  job_id INTEGER NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
+  route TEXT NOT NULL CHECK (route IN ('form','email')),
+  prepared_at TEXT,
+  approved_at TEXT,
+  sent_at TEXT,
+  salary_quoted INTEGER,
+  salary_reason TEXT,
+  answers TEXT NOT NULL DEFAULT '{}',
+  outcome TEXT
+);
+
+CREATE TABLE contacts (
+  id INTEGER PRIMARY KEY,
+  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  name TEXT,
+  email TEXT NOT NULL,
+  role TEXT,
+  source_url TEXT NOT NULL,
+  found_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (company_id, email)
+);
+
+CREATE TABLE action_queue (
+  id INTEGER PRIMARY KEY,
+  job_id INTEGER REFERENCES jobs(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN (
+    'approve_email','signup_needed','captcha','sensitive_question',
+    'confirm_submit','out_of_range','verify_unclear','follow_up')),
+  payload TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','done','dismissed')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  resolved_at TEXT
+);
+CREATE INDEX idx_action_queue_open ON action_queue(status, created_at);
+
+-- Accounts hold no secrets. Credentials live in the vault, out of the agent's reach.
+CREATE TABLE accounts (
+  id INTEGER PRIMARY KEY,
+  site TEXT NOT NULL,
+  email_used TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'created' CHECK (status IN ('created','verified','disabled')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (site, email_used)
+);
+
+CREATE TABLE recipes (
+  id INTEGER PRIMARY KEY,
+  site_pattern TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  spec TEXT NOT NULL,
+  success_count INTEGER NOT NULL DEFAULT 0,
+  fail_count INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (site_pattern, version)
+);
+
+-- Append-only audit log.
+CREATE TABLE events (
+  id INTEGER PRIMARY KEY,
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  actor TEXT NOT NULL CHECK (actor IN ('agent','human','system')),
+  type TEXT NOT NULL,
+  job_id INTEGER,
+  detail TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TRIGGER events_no_update BEFORE UPDATE ON events
+BEGIN SELECT RAISE(ABORT, 'events is append-only'); END;
+CREATE TRIGGER events_no_delete BEFORE DELETE ON events
+BEGIN SELECT RAISE(ABORT, 'events is append-only'); END;
+
+CREATE VIEW source_stats AS
+SELECT
+  s.id AS source_id,
+  s.name AS source_name,
+  COUNT(j.id) AS found,
+  SUM(CASE WHEN j.state = 'dead' THEN 1 ELSE 0 END) AS dead,
+  SUM(CASE WHEN j.state IN ('applied','replied','interview','offer','rejected','no_response') THEN 1 ELSE 0 END) AS applied,
+  SUM(CASE WHEN j.state IN ('replied','interview','offer') THEN 1 ELSE 0 END) AS replies
+FROM sources s LEFT JOIN jobs j ON j.source_id = s.id
+GROUP BY s.id;
+`,
+  },
+];
