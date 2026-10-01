@@ -4,7 +4,8 @@ import { getDocument, listDocuments, saveDocument, type NewDocument } from "./do
 import { addFact, deleteFact, getFacts, listFacts, makeFactGeneral, updateFact, type FactKind, type NewFact } from "./facts.js";
 import { addCandidateJob, logEvent, transitionJob, type NewJob } from "./jobs.js";
 import { getPreferences, getProfile, setPreferences, setProfile, type Preferences, type Profile } from "./profile.js";
-import type { JobState } from "./states.js";
+import { listActionsDetailed, listJobs, getJob, sourceStats } from "./queries.js";
+import { allowedTransitions, type JobState } from "./states.js";
 
 /**
  * What the AI agent is allowed to do. The actor is fixed to "agent" here and is not a
@@ -53,5 +54,12 @@ export function createHumanApi(db: DB) {
       confirmGap(db, actionId, fact, scope, "human"),
     getDocument: (id: number) => getDocument(db, id),
     listDocuments: (jobId: number | null) => listDocuments(db, jobId),
+    getProfile: () => getProfile(db),
+    getPreferences: () => getPreferences(db),
+    listJobs: (state?: JobState) => listJobs(db, { state }),
+    getJob: (id: number) => getJob(db, id),
+    listActionsDetailed: () => listActionsDetailed(db),
+    sourceStats: () => sourceStats(db),
+    allowedTransitions: (from: JobState) => allowedTransitions(from, "human"),
   };
 }

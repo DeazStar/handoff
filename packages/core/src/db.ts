@@ -7,6 +7,7 @@ export function openDb(path: string): DB {
   const db = new Database(path);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
+  db.pragma("busy_timeout = 5000");
   migrate(db);
   return db;
 }

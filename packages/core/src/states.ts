@@ -43,3 +43,10 @@ export function assertTransition(from: JobState, to: JobState, actor: Actor): vo
     throw new TransitionError(`${actor} may not move a job ${from} -> ${to}`);
   }
 }
+
+/** The states a job can move to right now for this actor; the dashboard uses it to show only valid buttons. */
+export function allowedTransitions(from: JobState, actor: Actor): JobState[] {
+  return Object.entries(TRANSITIONS[from] ?? {})
+    .filter(([, actors]) => actors?.includes(actor))
+    .map(([to]) => to as JobState);
+}

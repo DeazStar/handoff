@@ -1,0 +1,31 @@
+:root {
+  --bg: #fafafa; --fg: #1a1a1a; --muted: #666; --card: #fff; --line: #e2e2e2;
+  --accent: #2457d6; --good: #1d7a3a; --warn: #a8570a; --bad: #b3261e;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14161a; --fg: #e8e8e8; --muted: #9aa0a6; --card: #1d2026; --line: #2d3138; --accent: #7ba0ff; --good: #5fcf86; --warn: #e0a05a; --bad: #ff8a80; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+header { display: flex; gap: 24px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+nav a { margin-right: 16px; color: var(--muted); text-decoration: none; }
+nav a.active { color: var(--fg); font-weight: 600; }
+main { max-width: 900px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 20px; margin: 8px 0 16px; }
+h2 { font-size: 16px; margin: 20px 0 8px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.muted { color: var(--muted); font-size: 13px; }
+.badge { font-size: 12px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); }
+.badge.gap { color: var(--warn); border-color: var(--warn); }
+button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { color: var(--bad); }
+input, select, textarea { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+textarea { width: 100%; min-height: 56px; }
+a { color: var(--accent); }
+table { width: 100%; border-collapse: collapse; }
+td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.error { color: var(--bad); margin: 8px 0; }
+.empty { color: var(--muted); padding: 24px 0; }
+@media (max-width: 600px) { main { padding: 12px; } }
