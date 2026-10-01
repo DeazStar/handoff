@@ -4,16 +4,18 @@ import { logEvent } from "./jobs.js";
 import { requireHuman } from "./profile.js";
 import type { Actor } from "./states.js";
 
-export type ActionKind =
-  | "approve_email"
-  | "signup_needed"
-  | "captcha"
-  | "sensitive_question"
-  | "confirm_submit"
-  | "out_of_range"
-  | "verify_unclear"
-  | "follow_up"
-  | "gap";
+export const ACTION_KINDS = [
+  "approve_email",
+  "signup_needed",
+  "captcha",
+  "sensitive_question",
+  "confirm_submit",
+  "out_of_range",
+  "verify_unclear",
+  "follow_up",
+  "gap",
+] as const;
+export type ActionKind = (typeof ACTION_KINDS)[number];
 
 export function queueAction(
   db: DB,

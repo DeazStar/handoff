@@ -1,3 +1,4 @@
+import { recordVerification, setMatch, upsertCompany, upsertSource, type Verification } from "./agentOps.js";
 import { confirmGap, listOpenActions, queueAction, reportGap, resolveAction, type ActionKind, type GapReport } from "./actionQueue.js";
 import type { DB } from "./db.js";
 import { getDocument, listDocuments, saveDocument, type NewDocument } from "./documents.js";
@@ -31,6 +32,12 @@ export function createAgentApi(db: DB) {
     saveDocument: (doc: NewDocument) => saveDocument(db, doc, "agent"),
     getDocument: (id: number) => getDocument(db, id),
     listDocuments: (jobId: number | null) => listDocuments(db, jobId),
+    listJobs: (state?: JobState) => listJobs(db, { state }),
+    getJob: (id: number) => getJob(db, id),
+    upsertCompany: (c: Parameters<typeof upsertCompany>[1]) => upsertCompany(db, c, "agent"),
+    upsertSource: (s: Parameters<typeof upsertSource>[1]) => upsertSource(db, s, "agent"),
+    recordVerification: (jobId: number, v: Verification) => recordVerification(db, jobId, v, "agent"),
+    setMatch: (jobId: number, score: number, reason: string) => setMatch(db, jobId, score, reason, "agent"),
     reportGap: (jobId: number, gap: GapReport) => reportGap(db, jobId, gap, "agent"),
   };
 }

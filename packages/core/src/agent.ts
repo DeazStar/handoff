@@ -2,3 +2,9 @@
 export { openDb, type DB } from "./db.js";
 export { createAgentApi } from "./api.js";
 export { canonicalizeUrl, hashDescription } from "./normalize.js";
+export { resolveDataPaths } from "./paths.js";
+// Constants and types the tool definitions need.
+export { JOB_STATES, type JobState } from "./states.js";
+export { FACT_KINDS, type FactKind } from "./facts.js";
+export { ACTION_KINDS, type ActionKind } from "./actionQueue.js";
+export type { Block } from "./documents.js";

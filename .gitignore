@@ -5,3 +5,6 @@ dist/
 *.db-shm
 .env
 .DS_Store
+
+# Local MCP setup that points at the scratch test database
+.mcp.json
