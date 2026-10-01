@@ -1,4 +1,4 @@
-import { recordVerification, setMatch, upsertCompany, upsertSource, type Verification } from "./agentOps.js";
+import { addCandidateJobWithinBudget, discoveryBudget, listSources, recordVerification, setMatch, setRoute, setSourceEnabled, upsertCompany, upsertSource, type Verification } from "./agentOps.js";
 import { confirmGap, listOpenActions, queueAction, reportGap, resolveAction, type ActionKind, type GapReport } from "./actionQueue.js";
 import type { DB } from "./db.js";
 import { getDocument, listDocuments, saveDocument, type NewDocument } from "./documents.js";
@@ -15,7 +15,8 @@ import { allowedTransitions, type JobState } from "./states.js";
  */
 export function createAgentApi(db: DB) {
   return {
-    addCandidateJob: (job: NewJob) => addCandidateJob(db, job, "agent"),
+    // Stops at the user's daily limit so a run cannot keep spending tokens on new jobs.
+    addCandidateJob: (job: NewJob) => addCandidateJobWithinBudget(db, job, "agent"),
     transitionJob: (jobId: number, to: JobState, reason?: string) =>
       transitionJob(db, jobId, to, "agent", reason),
     queueAction: (kind: ActionKind, jobId: number | null, payload: unknown = {}) =>
@@ -38,6 +39,10 @@ export function createAgentApi(db: DB) {
     upsertSource: (s: Parameters<typeof upsertSource>[1]) => upsertSource(db, s, "agent"),
     recordVerification: (jobId: number, v: Verification) => recordVerification(db, jobId, v, "agent"),
     setMatch: (jobId: number, score: number, reason: string) => setMatch(db, jobId, score, reason, "agent"),
+    setRoute: (jobId: number, route: "form" | "email" | "none", opts: { requiresSignin?: boolean; applyUrl?: string } = {}) =>
+      setRoute(db, jobId, route, opts, "agent"),
+    listSources: () => listSources(db),
+    discoveryBudget: () => discoveryBudget(db),
     reportGap: (jobId: number, gap: GapReport) => reportGap(db, jobId, gap, "agent"),
   };
 }
@@ -67,6 +72,10 @@ export function createHumanApi(db: DB) {
     getJob: (id: number) => getJob(db, id),
     listActionsDetailed: () => listActionsDetailed(db),
     sourceStats: () => sourceStats(db),
+    listSources: () => listSources(db),
+    addSource: (s: Parameters<typeof upsertSource>[1]) => upsertSource(db, s, "human"),
+    setSourceEnabled: (id: number, enabled: boolean) => setSourceEnabled(db, id, enabled, "human"),
+    discoveryBudget: () => discoveryBudget(db),
     allowedTransitions: (from: JobState) => allowedTransitions(from, "human"),
   };
 }

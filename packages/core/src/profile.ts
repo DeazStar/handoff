@@ -13,6 +13,7 @@ export interface Profile {
   languages: string[];
 }
 
+/** For roles, seniority, locations and industries, an empty list means "any". */
 export interface Preferences {
   roles: string[];
   seniority: string[];
@@ -25,6 +26,8 @@ export interface Preferences {
   salaryCeiling?: number;
   currency?: string;
   dailyApplicationLimit: number;
+  /** Most new jobs one day's discovery may add. */
+  dailyDiscoveryLimit: number;
 }
 
 /** Profile, facts and preferences are the user's own truth. The agent reads them, never writes them. */
@@ -86,6 +89,7 @@ export function getPreferences(db: DB): Preferences | null {
     salaryCeiling: r.salary_ceiling ?? undefined,
     currency: r.currency ?? undefined,
     dailyApplicationLimit: r.daily_application_limit,
+    dailyDiscoveryLimit: r.daily_discovery_limit,
   };
 }
 
@@ -98,19 +102,23 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
     if (given[i]! < given[i - 1]!) throw new Error("Salary must satisfy floor <= target <= ceiling");
   }
   if (given.length > 0 && !p.currency) throw new Error("A currency is required when salary is set");
-  if (!Number.isInteger(p.dailyApplicationLimit) || p.dailyApplicationLimit < 0) {
-    throw new Error("dailyApplicationLimit must be a non-negative integer");
+  for (const [name, n, max] of [
+    ["dailyApplicationLimit", p.dailyApplicationLimit, 100],
+    ["dailyDiscoveryLimit", p.dailyDiscoveryLimit, 200],
+  ] as const) {
+    if (!Number.isInteger(n) || n < 0 || n > max) throw new Error(`${name} must be a whole number from 0 to ${max}`);
   }
   db.prepare(
     `INSERT INTO preferences (id, roles, seniority, locations, remote_policy, industries, exclusions,
-       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        roles = excluded.roles, seniority = excluded.seniority, locations = excluded.locations,
        remote_policy = excluded.remote_policy, industries = excluded.industries,
        exclusions = excluded.exclusions, salary_floor = excluded.salary_floor,
        salary_target = excluded.salary_target, salary_ceiling = excluded.salary_ceiling,
        currency = excluded.currency, daily_application_limit = excluded.daily_application_limit,
+       daily_discovery_limit = excluded.daily_discovery_limit,
        updated_at = datetime('now')`,
   ).run(
     JSON.stringify(p.roles),
@@ -124,6 +132,7 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
     hi ?? null,
     p.currency ?? null,
     p.dailyApplicationLimit,
+    p.dailyDiscoveryLimit,
   );
   logEvent(db, actor, "preferences_updated", null);
 }

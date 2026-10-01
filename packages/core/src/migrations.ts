@@ -258,4 +258,13 @@ CREATE INDEX idx_action_queue_open ON action_queue(status, created_at);
     // job_id NULL = a general fact. A number = usable only in documents for that job.
     sql: `ALTER TABLE facts ADD COLUMN job_id INTEGER REFERENCES jobs(id) ON DELETE CASCADE;`,
   },
+  {
+    id: 6,
+    name: "discovery_budget_and_source_toggle",
+    // How many jobs one day's discovery may add, and a switch to pause a source without deleting it.
+    sql: `
+ALTER TABLE preferences ADD COLUMN daily_discovery_limit INTEGER NOT NULL DEFAULT 10;
+ALTER TABLE sources ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+`,
+  },
 ];

@@ -28,18 +28,25 @@ export function logEvent(
   );
 }
 
-/** Inserts a job, or returns the existing id when the canonical URL or description already exists. */
-export function addCandidateJob(db: DB, job: NewJob, actor: Actor = "agent"): { id: number; created: boolean } {
+/** The id of a job already stored under this canonical URL, or the same description at the same company. */
+export function findExistingJob(db: DB, job: NewJob): number | undefined {
   const byUrl = db.prepare("SELECT id FROM jobs WHERE canonical_url = ?").get(job.canonicalUrl) as
     | { id: number }
     | undefined;
-  if (byUrl) return { id: byUrl.id, created: false };
+  if (byUrl) return byUrl.id;
   if (job.descriptionHash) {
     const byHash = db
       .prepare("SELECT id FROM jobs WHERE description_hash = ? AND company_id IS ?")
       .get(job.descriptionHash, job.companyId ?? null) as { id: number } | undefined;
-    if (byHash) return { id: byHash.id, created: false };
+    if (byHash) return byHash.id;
   }
+  return undefined;
+}
+
+/** Inserts a job, or returns the existing id when the canonical URL or description already exists. */
+export function addCandidateJob(db: DB, job: NewJob, actor: Actor = "agent"): { id: number; created: boolean } {
+  const existing = findExistingJob(db, job);
+  if (existing !== undefined) return { id: existing, created: false };
   const info = db
     .prepare(
       `INSERT INTO jobs (company_id, source_id, title, url, canonical_url, location, remote, posted_at, description_hash)

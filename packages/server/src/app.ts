@@ -76,6 +76,19 @@ function statusFor(e: unknown): [number, string] {
   return [500, "Internal error"];
 }
 
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : [];
+const optText = (v: unknown): string | undefined => {
+  const t = typeof v === "string" ? v.trim() : "";
+  return t || undefined;
+};
+const optInt = (v: unknown): number | undefined => {
+  if (v === undefined || v === null || v === "") return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw new HttpError(400, "Expected a number");
+  return n;
+};
+
 const int = (s: string) => {
   const n = Number(s);
   if (!Number.isInteger(n)) throw new HttpError(400, "Bad id");
@@ -127,9 +140,45 @@ export function createApp(db: DB, opts: { token: string }): Server {
   route("POST", "/api/facts/(\\d+)/make-general", (m) => (human.makeFactGeneral(int(m[1]!)), { ok: true }));
 
   route("GET", "/api/profile", () => human.getProfile());
-  route("PUT", "/api/profile", (_m, b) => (human.setProfile(b), { ok: true }));
+  route("PUT", "/api/profile", (_m, b) => {
+    human.setProfile({
+      fullName: String(b.fullName ?? ""),
+      email: optText(b.email),
+      phone: optText(b.phone),
+      location: optText(b.location),
+      links: strings(b.links),
+      workAuthorization: optText(b.workAuthorization),
+      noticePeriod: optText(b.noticePeriod),
+      languages: strings(b.languages),
+    });
+    return { ok: true };
+  });
   route("GET", "/api/preferences", () => human.getPreferences());
-  route("PUT", "/api/preferences", (_m, b) => (human.setPreferences(b), { ok: true }));
+  route("PUT", "/api/preferences", (_m, b) => {
+    human.setPreferences({
+      roles: strings(b.roles),
+      seniority: strings(b.seniority),
+      locations: strings(b.locations),
+      remotePolicy: b.remotePolicy,
+      industries: strings(b.industries),
+      exclusions: strings(b.exclusions),
+      salaryFloor: optInt(b.salaryFloor),
+      salaryTarget: optInt(b.salaryTarget),
+      salaryCeiling: optInt(b.salaryCeiling),
+      currency: optText(b.currency),
+      dailyApplicationLimit: Number(b.dailyApplicationLimit),
+      dailyDiscoveryLimit: Number(b.dailyDiscoveryLimit),
+    });
+    return { ok: true };
+  });
+  route("GET", "/api/sources", () => human.listSources());
+  route("POST", "/api/sources", (_m, b) => {
+    if (!["jobsite", "careers_page", "email_contact", "google"].includes(b.kind)) throw new HttpError(400, "Bad source kind");
+    if (!String(b.name ?? "").trim()) throw new HttpError(400, "A source needs a name");
+    return { id: human.addSource({ kind: b.kind, name: String(b.name), url: optText(b.url) }) };
+  });
+  route("POST", "/api/sources/(\\d+)/enabled", (m, b) => (human.setSourceEnabled(int(m[1]!), b.enabled === true), { ok: true }));
+  route("GET", "/api/budget", () => human.discoveryBudget());
   route("GET", "/api/sources/stats", () => human.sourceStats());
   route("GET", "/api/documents/(\\d+)", (m) => {
     const d = human.getDocument(int(m[1]!));

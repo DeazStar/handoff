@@ -175,6 +175,106 @@ async function factsView() {
   }
 }
 
+
+// ---------- settings ----------
+
+/** A comma-separated list with an "Any" switch. Any is saved as an empty list. */
+function anyList(label, hint, values) {
+  const input = h("input", { placeholder: hint, style: "flex:1;min-width:200px" });
+  input.value = values.join(", ");
+  const any = h("input", { type: "checkbox" });
+  any.checked = values.length === 0;
+  const sync = () => { input.disabled = any.checked; };
+  any.addEventListener("change", sync);
+  sync();
+  return {
+    el: h("div", { class: "field" }, h("label", {}, label),
+      h("div", { class: "row" }, input, h("label", { class: "muted" }, any, " Any"))),
+    get: () => (any.checked ? [] : input.value.split(",").map((x) => x.trim()).filter(Boolean)),
+  };
+}
+
+function textField(label, value, attrs) {
+  const input = h("input", attrs || {});
+  input.value = value ?? "";
+  return { el: h("div", { class: "field" }, h("label", {}, label), input), get: () => input.value, input };
+}
+
+async function settingsView() {
+  const [prefs, profile, sources, budget] = await Promise.all([
+    api("GET", "/api/preferences"), api("GET", "/api/profile"), api("GET", "/api/sources"), api("GET", "/api/budget"),
+  ]);
+  const p = prefs || { roles: [], seniority: [], locations: [], remotePolicy: "any", industries: [], exclusions: [], dailyApplicationLimit: 5, dailyDiscoveryLimit: 10 };
+
+  const roles = anyList("Target roles", "Backend Engineer, Data Engineer", p.roles);
+  const level = anyList("Level", "junior, mid, senior", p.seniority);
+  const where = anyList("Locations", "Addis Ababa, Remote", p.locations);
+  const industries = anyList("Industries", "fintech, health", p.industries);
+  const exclusions = textField("Exclude (companies or keywords, comma separated)", (p.exclusions || []).join(", "));
+  const remote = h("select", {}, ["any", "remote", "hybrid", "onsite"].map((v) => h("option", { value: v }, v)));
+  remote.value = p.remotePolicy;
+  const floor = textField("Salary floor", p.salaryFloor, { type: "number", min: "0" });
+  const target = textField("Target", p.salaryTarget, { type: "number", min: "0" });
+  const ceiling = textField("Ceiling", p.salaryCeiling, { type: "number", min: "0" });
+  const currency = textField("Currency", p.currency, { placeholder: "USD", size: "6" });
+  const discovery = textField("Jobs to process per day", p.dailyDiscoveryLimit, { type: "number", min: "0", max: "200" });
+  const applications = textField("Applications per day", p.dailyApplicationLimit, { type: "number", min: "0", max: "100" });
+
+  const savePrefs = act(() => api("PUT", "/api/preferences", {
+    roles: roles.get(), seniority: level.get(), locations: where.get(), industries: industries.get(),
+    exclusions: exclusions.get().split(",").map((x) => x.trim()).filter(Boolean),
+    remotePolicy: remote.value,
+    salaryFloor: floor.get(), salaryTarget: target.get(), salaryCeiling: ceiling.get(), currency: currency.get(),
+    dailyDiscoveryLimit: discovery.get(), dailyApplicationLimit: applications.get(),
+  }));
+
+  view.replaceChildren(
+    h("h1", {}, "Settings"),
+    h("h2", {}, "What you are looking for"),
+    h("div", { class: "card" }, roles.el, level.el, where.el,
+      h("div", { class: "field" }, h("label", {}, "Remote policy"), remote),
+      industries.el, exclusions.el,
+      h("div", { class: "row" }, floor.el, target.el, ceiling.el, currency.el),
+      h("h2", {}, "Daily limits"),
+      h("div", { class: "muted" }, `Today: ${budget.addedToday} of ${budget.limit} jobs added.`),
+      h("div", { class: "row" }, discovery.el, applications.el),
+      h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "primary", onclick: savePrefs }, "Save search settings"))));
+
+  // sources
+  const kind = h("select", {}, [["jobsite", "job site"], ["careers_page", "company careers page"], ["email_contact", "email contact"]].map(([v, t]) => h("option", { value: v }, t)));
+  const name = h("input", { placeholder: "name, e.g. remoteok.com" });
+  const url = h("input", { placeholder: "https://... (optional)", style: "flex:1;min-width:200px" });
+  view.append(
+    h("h2", {}, "Sites to search"),
+    h("div", { class: "muted" }, "The agent searches Google and the sites you list here. Sites it finds on its own are shown below as agent-added and are not searched until you add them."),
+    h("div", { class: "card" }, h("div", { class: "row" }, kind, name, url,
+      h("button", { class: "primary", onclick: act(() => api("POST", "/api/sources", { kind: kind.value, name: name.value, url: url.value })) }, "Add"))),
+    ...sources.map((src) => h("div", { class: "card" }, h("div", { class: "row" },
+      h("span", { class: "badge" }, src.kind.replaceAll("_", " ")),
+      h("strong", {}, src.name),
+      src.addedBy === "agent" && h("span", { class: "badge gap" }, "agent-added"),
+      safeHref(src.url) && h("a", { href: safeHref(src.url), target: "_blank", rel: "noopener noreferrer" }, "open"),
+      h("button", { onclick: act(() => api("POST", `/api/sources/${src.id}/enabled`, { enabled: !src.enabled })) }, src.enabled ? "On: click to turn off" : "Off: click to turn on")))));
+
+  // profile
+  const name2 = textField("Full name", profile?.fullName);
+  const email = textField("Email", profile?.email, { type: "email" });
+  const phone = textField("Phone", profile?.phone);
+  const loc = textField("Where you live", profile?.location);
+  const links = textField("Links (comma separated)", (profile?.links || []).join(", "));
+  const auth = textField("Work authorization", profile?.workAuthorization, { placeholder: "e.g. citizen, needs sponsorship" });
+  const notice = textField("Notice period", profile?.noticePeriod, { placeholder: "e.g. 1 month" });
+  const langs = textField("Languages (comma separated)", (profile?.languages || []).join(", "));
+  const list = (f) => f.get().split(",").map((x) => x.trim()).filter(Boolean);
+  view.append(
+    h("h2", {}, "About you"),
+    h("div", { class: "card" }, name2.el, email.el, phone.el, loc.el, links.el, auth.el, notice.el, langs.el,
+      h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "primary", onclick: act(() => api("PUT", "/api/profile", {
+        fullName: name2.get(), email: email.get(), phone: phone.get(), location: loc.get(), links: list(links),
+        workAuthorization: auth.get(), noticePeriod: notice.get(), languages: list(langs),
+      })) }, "Save profile"))));
+}
+
 // ---------- routing ----------
 
 async function render() {
@@ -184,6 +284,7 @@ async function render() {
     if (page === "pipeline") await pipelineView();
     else if (page === "jobs") await jobView(Number(arg));
     else if (page === "facts") await factsView();
+    else if (page === "settings") await settingsView();
     else queueCount = await queueView();
     if (page) queueCount = (await api("GET", "/api/actions")).length;
   } catch (e) {
@@ -192,7 +293,8 @@ async function render() {
   nav.replaceChildren(
     h("a", { href: "#/", class: !page ? "active" : "" }, `Needs you${queueCount ? ` (${queueCount})` : ""}`),
     h("a", { href: "#/pipeline", class: page === "pipeline" || page === "jobs" ? "active" : "" }, "Pipeline"),
-    h("a", { href: "#/facts", class: page === "facts" ? "active" : "" }, "Facts"));
+    h("a", { href: "#/facts", class: page === "facts" ? "active" : "" }, "Facts"),
+    h("a", { href: "#/settings", class: page === "settings" ? "active" : "" }, "Settings"));
 }
 
 window.addEventListener("hashchange", render);

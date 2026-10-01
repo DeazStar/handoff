@@ -113,3 +113,45 @@ describe("api", () => {
     expect(d.events[0]).toMatchObject({ actor: "human", type: "state_changed" });
   });
 });
+
+describe("settings api", () => {
+  it("saves search settings with Any as empty lists, and reads them back", async () => {
+    const res = await fetch(base + "/api/preferences", {
+      method: "PUT", headers: json,
+      body: JSON.stringify({
+        roles: [], seniority: ["mid", "senior", " "], locations: ["Addis Ababa"], remotePolicy: "any",
+        industries: [], exclusions: ["BadCorp"], salaryFloor: "1000", salaryTarget: "", salaryCeiling: "2000", currency: "USD",
+        dailyApplicationLimit: "5", dailyDiscoveryLimit: "8",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const p = await (await get("/api/preferences")).json();
+    expect(p).toMatchObject({ roles: [], seniority: ["mid", "senior"], salaryFloor: 1000, salaryCeiling: 2000, dailyDiscoveryLimit: 8 });
+    expect(p.salaryTarget).toBeUndefined();
+  });
+
+  it("rejects bad settings with 400", async () => {
+    const put = (body: object) => fetch(base + "/api/preferences", { method: "PUT", headers: json, body: JSON.stringify(body) });
+    const base_ = { roles: [], remotePolicy: "any", dailyApplicationLimit: 5, dailyDiscoveryLimit: 5 };
+    expect((await put({ ...base_, salaryFloor: 5000, salaryCeiling: 1000, currency: "USD" })).status).toBe(400);
+    expect((await put({ ...base_, remotePolicy: "sometimes" })).status).toBe(400);
+    expect((await put({ ...base_, dailyDiscoveryLimit: -3 })).status).toBe(400);
+    expect((await put({ ...base_, salaryFloor: "abc" })).status).toBe(400);
+  });
+
+  it("adds a source, toggles it, and reports the budget", async () => {
+    const added = await (await post("/api/sources", { kind: "jobsite", name: "remoteok.com", url: "https://remoteok.com" })).json();
+    expect((await post(`/api/sources/${added.id}/enabled`, { enabled: false })).status).toBe(200);
+    const list = await (await get("/api/sources")).json();
+    expect(list[0]).toMatchObject({ name: "remoteok.com", addedBy: "user", enabled: false });
+    expect((await post("/api/sources", { kind: "nonsense", name: "x" })).status).toBe(400);
+    expect(await (await get("/api/budget")).json()).toMatchObject({ limit: 10, addedToday: 0 });
+  });
+
+  it("saves the profile", async () => {
+    const res = await fetch(base + "/api/profile", { method: "PUT", headers: json, body: JSON.stringify({ fullName: "Ada", links: ["https://x.dev"], languages: [] }) });
+    expect(res.status).toBe(200);
+    expect(await (await get("/api/profile")).json()).toMatchObject({ fullName: "Ada", links: ["https://x.dev"] });
+    expect((await fetch(base + "/api/profile", { method: "PUT", headers: json, body: JSON.stringify({ fullName: " " }) })).status).toBe(400);
+  });
+});

@@ -89,6 +89,42 @@ describe("discovery flow", () => {
   });
 });
 
+describe("settings the agent respects", () => {
+  it("shows the budget and the user's sites", async () => {
+    const human = createHumanApi(db);
+    human.setPreferences({ roles: [], seniority: [], locations: [], remotePolicy: "any", industries: [], exclusions: [], dailyApplicationLimit: 5, dailyDiscoveryLimit: 2 });
+    human.addSource({ kind: "jobsite", name: "remoteok.com" });
+    expect((await call("get_budget")).data).toEqual({ limit: 2, addedToday: 0, remaining: 2 });
+    await call("add_candidate_job", job);
+    expect((await call("get_budget")).data.remaining).toBe(1);
+    await call("add_candidate_job", { title: "Second", url: "https://acme.example/jobs/2" });
+    const refused = await call("add_candidate_job", { title: "Third", url: "https://acme.example/jobs/3" });
+    expect(refused.error).toBe(true);
+    expect(refused.text).toMatch(/Stop searching for today/);
+    expect((await call("add_candidate_job", { title: "Second", url: "https://acme.example/jobs/2" })).data.created).toBe(false);
+    const sources = (await call("list_sources")).data;
+    expect(sources).toEqual([expect.objectContaining({ name: "remoteok.com", addedBy: "user", enabled: true })]);
+    expect((await call("get_preferences")).data.roles).toEqual([]);
+  });
+
+  it("asks the user to sign up when the form needs a login, and does nothing otherwise", async () => {
+    const id = (await call("add_candidate_job", job)).data.id;
+    expect((await call("set_route", { jobId: id, route: "email" })).data.signupQueued).toBe(false);
+    expect((await call("list_open_actions")).data).toHaveLength(0);
+    expect((await call("set_route", { jobId: id, route: "form", requiresSignin: true })).data.signupQueued).toBe(true);
+    const open = (await call("list_open_actions")).data;
+    expect(open).toHaveLength(1);
+    expect(open[0].kind).toBe("signup_needed");
+    expect((await call("set_route", { jobId: 999, route: "form" })).error).toBe(true);
+  });
+
+  it("cannot turn sources on or off", async () => {
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    expect(names).not.toContain("set_source_enabled");
+    expect(names).not.toContain("add_source_trusted");
+  });
+});
+
 describe("handing work to the user", () => {
   it("queues actions and gaps that only the user can resolve", async () => {
     const id = (await call("add_candidate_job", job)).data.id;

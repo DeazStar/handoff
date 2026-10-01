@@ -1,5 +1,5 @@
 import type { DB } from "./db.js";
-import { logEvent, transitionJob } from "./jobs.js";
+import { addCandidateJob, findExistingJob, logEvent, transitionJob, type NewJob } from "./jobs.js";
 import { queueAction } from "./actionQueue.js";
 import type { Actor, JobState } from "./states.js";
 
@@ -108,5 +108,85 @@ export function setMatch(db: DB, jobId: number, score: number, reason: string, a
     logEvent(db, actor, "match_set", jobId, { score });
     if (job.state === "verified_live") transitionJob(db, jobId, "matched", actor, `match ${score}/10`);
     return "matched" as JobState;
+  })();
+}
+
+export interface SourceRow {
+  id: number;
+  kind: string;
+  name: string;
+  url?: string;
+  addedBy: "user" | "agent";
+  enabled: boolean;
+}
+
+/** User-added, enabled sources are the ones the agent is told to search. */
+export function listSources(db: DB): SourceRow[] {
+  return db
+    .prepare("SELECT id, kind, name, url, added_by, enabled FROM sources ORDER BY added_by DESC, name")
+    .all()
+    .map((r: any) => ({ id: r.id, kind: r.kind, name: r.name, url: r.url ?? undefined, addedBy: r.added_by, enabled: r.enabled === 1 }));
+}
+
+export function setSourceEnabled(db: DB, id: number, enabled: boolean, actor: Actor): void {
+  if (actor !== "human") throw new Error("Only the user can turn sources on or off");
+  const info = db.prepare("UPDATE sources SET enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
+  if (info.changes === 0) throw new Error(`Source ${id} not found`);
+  logEvent(db, actor, "source_toggled", null, { id, enabled });
+}
+
+/** How much of today's discovery budget is used. "Today" is the user's local day. */
+export function discoveryBudget(db: DB): { limit: number; addedToday: number; remaining: number } {
+  const limit =
+    (db.prepare("SELECT daily_discovery_limit AS n FROM preferences WHERE id = 1").get() as { n: number } | undefined)?.n ?? 10;
+  const addedToday = (
+    db
+      .prepare("SELECT COUNT(*) AS n FROM jobs WHERE date(found_at, 'localtime') = date('now', 'localtime')")
+      .get() as { n: number }
+  ).n;
+  return { limit, addedToday, remaining: Math.max(0, limit - addedToday) };
+}
+
+/**
+ * Records how to apply to a job. If the apply form is behind a sign-in, the user is asked
+ * to sign up (the agent never does this) and the job is left waiting.
+ */
+export function setRoute(
+  db: DB,
+  jobId: number,
+  route: "form" | "email" | "none",
+  opts: { requiresSignin?: boolean; applyUrl?: string },
+  actor: Actor,
+): void {
+  db.transaction(() => {
+    const job = db.prepare("SELECT url FROM jobs WHERE id = ?").get(jobId) as { url: string } | undefined;
+    if (!job) throw new Error(`Job ${jobId} not found`);
+    db.prepare("UPDATE jobs SET route = ?, updated_at = datetime('now') WHERE id = ?").run(route, jobId);
+    logEvent(db, actor, "route_set", jobId, { route, requiresSignin: opts.requiresSignin ?? false });
+    if (route === "form" && opts.requiresSignin) {
+      const target = opts.applyUrl ?? job.url;
+      let site = target;
+      try { site = new URL(target).hostname; } catch {}
+      queueAction(db, "signup_needed", jobId, { site, applyUrl: target }, actor);
+    }
+  })();
+}
+
+export class BudgetError extends Error {}
+
+/**
+ * The agent's way to add a job. Once today's discovery limit is used, only jobs that are
+ * already stored come back (they cost nothing); anything new is refused.
+ */
+export function addCandidateJobWithinBudget(db: DB, job: NewJob, actor: Actor): { id: number; created: boolean } {
+  return db.transaction(() => {
+    const budget = discoveryBudget(db);
+    if (budget.remaining === 0 && findExistingJob(db, job) === undefined) {
+      throw new BudgetError(
+        `Daily discovery limit reached (${budget.addedToday} of ${budget.limit} jobs added today). ` +
+          `Stop searching for today. The user can raise the limit in Settings.`,
+      );
+    }
+    return addCandidateJob(db, job, actor);
   })();
 }
