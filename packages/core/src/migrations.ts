@@ -223,4 +223,39 @@ BEGIN
 END;
 `,
   },
+  {
+    id: 3,
+    name: "document_content",
+    // The blocks as written, so the exact wording can be reviewed before approval.
+    sql: `ALTER TABLE documents ADD COLUMN content TEXT NOT NULL DEFAULT '[]';`,
+  },
+  {
+    id: 4,
+    name: "action_kind_gap",
+    // SQLite cannot alter a CHECK constraint, so the table is rebuilt with 'gap' added.
+    sql: `
+CREATE TABLE action_queue_new (
+  id INTEGER PRIMARY KEY,
+  job_id INTEGER REFERENCES jobs(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN (
+    'approve_email','signup_needed','captcha','sensitive_question',
+    'confirm_submit','out_of_range','verify_unclear','follow_up','gap')),
+  payload TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','done','dismissed')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  resolved_at TEXT
+);
+INSERT INTO action_queue_new (id, job_id, kind, payload, status, created_at, resolved_at)
+  SELECT id, job_id, kind, payload, status, created_at, resolved_at FROM action_queue;
+DROP TABLE action_queue;
+ALTER TABLE action_queue_new RENAME TO action_queue;
+CREATE INDEX idx_action_queue_open ON action_queue(status, created_at);
+`,
+  },
+  {
+    id: 5,
+    name: "job_scoped_facts",
+    // job_id NULL = a general fact. A number = usable only in documents for that job.
+    sql: `ALTER TABLE facts ADD COLUMN job_id INTEGER REFERENCES jobs(id) ON DELETE CASCADE;`,
+  },
 ];

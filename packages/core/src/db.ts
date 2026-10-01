@@ -11,7 +11,7 @@ export function openDb(path: string): DB {
   return db;
 }
 
-export function migrate(db: DB): void {
+export function migrate(db: DB, upTo = Infinity): void {
   db.exec(
     "CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL DEFAULT (datetime('now')))",
   );
@@ -19,7 +19,7 @@ export function migrate(db: DB): void {
     db.prepare("SELECT id FROM schema_migrations").all().map((r) => (r as { id: number }).id),
   );
   for (const m of migrations) {
-    if (applied.has(m.id)) continue;
+    if (applied.has(m.id) || m.id > upTo) continue;
     db.transaction(() => {
       db.exec(m.sql);
       db.prepare("INSERT INTO schema_migrations (id, name) VALUES (?, ?)").run(m.id, m.name);

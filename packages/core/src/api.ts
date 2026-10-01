@@ -1,7 +1,7 @@
-import { listOpenActions, queueAction, resolveAction, type ActionKind } from "./actionQueue.js";
+import { confirmGap, listOpenActions, queueAction, reportGap, resolveAction, type ActionKind, type GapReport } from "./actionQueue.js";
 import type { DB } from "./db.js";
-import { saveDocument, type NewDocument } from "./documents.js";
-import { addFact, deleteFact, getFacts, listFacts, updateFact, type FactKind, type NewFact } from "./facts.js";
+import { getDocument, listDocuments, saveDocument, type NewDocument } from "./documents.js";
+import { addFact, deleteFact, getFacts, listFacts, makeFactGeneral, updateFact, type FactKind, type NewFact } from "./facts.js";
 import { addCandidateJob, logEvent, transitionJob, type NewJob } from "./jobs.js";
 import { getPreferences, getProfile, setPreferences, setProfile, type Preferences, type Profile } from "./profile.js";
 import type { JobState } from "./states.js";
@@ -24,9 +24,13 @@ export function createAgentApi(db: DB) {
     // Read-only access to the user's truth. Writing it is human-only.
     getProfile: () => getProfile(db),
     getPreferences: () => getPreferences(db),
-    listFacts: (kind?: FactKind) => listFacts(db, kind),
+    // The agent only ever sees general facts plus those reserved for the job it is working on.
+    listFacts: (forJob: number | null, kind?: FactKind) => listFacts(db, { forJob, kind }),
     getFacts: (ids: number[]) => getFacts(db, ids),
     saveDocument: (doc: NewDocument) => saveDocument(db, doc, "agent"),
+    getDocument: (id: number) => getDocument(db, id),
+    listDocuments: (jobId: number | null) => listDocuments(db, jobId),
+    reportGap: (jobId: number, gap: GapReport) => reportGap(db, jobId, gap, "agent"),
   };
 }
 
@@ -43,5 +47,11 @@ export function createHumanApi(db: DB) {
     addFact: (f: NewFact) => addFact(db, f, "human"),
     updateFact: (id: number, f: NewFact) => updateFact(db, id, f, "human"),
     deleteFact: (id: number) => deleteFact(db, id, "human"),
+    makeFactGeneral: (id: number) => makeFactGeneral(db, id, "human"),
+    listFacts: () => listFacts(db),
+    confirmGap: (actionId: number, fact: Omit<NewFact, "jobId">, scope: "job" | "general") =>
+      confirmGap(db, actionId, fact, scope, "human"),
+    getDocument: (id: number) => getDocument(db, id),
+    listDocuments: (jobId: number | null) => listDocuments(db, jobId),
   };
 }

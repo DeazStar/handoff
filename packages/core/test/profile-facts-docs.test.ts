@@ -87,7 +87,7 @@ describe("document provenance", () => {
     const human = createHumanApi(db);
     const agent = createAgentApi(db);
     const id = human.addFact({ kind: "skill", text: "SQL" });
-    expect(agent.listFacts()).toHaveLength(1);
+    expect(agent.listFacts(null)).toHaveLength(1);
     const { id: jobId } = addCandidateJob(db, { title: "t", url: "https://a.io/1", canonicalUrl: "https://a.io/1" });
     expect(agent.saveDocument({ jobId, kind: "email", path: "e.txt", blocks: [{ text: "SQL", factIds: [id] }] }).version).toBe(1);
   });

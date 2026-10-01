@@ -29,10 +29,20 @@ export class ProvenanceError extends Error {
 }
 
 const NUMBER = /\d[\d.,]*%?/g;
-const clean = (s: string) => s.replace(/[.,]+$/, "");
+
+/**
+ * Numbers in a text as whole tokens: "50,000" and "50000" are the same token, "5" is not
+ * found inside "50000", and "40%" is a different token from "40" (a percentage is a
+ * different claim from a count).
+ */
+export function numberTokens(text: string): string[] {
+  return (text.match(NUMBER) ?? []).map((t) =>
+    t.replace(/[.,]+$/, "").replace(/,(?=\d{3}(?!\d))/g, ""),
+  );
+}
 
 /** Returns every problem found; an empty list means the document is acceptable. */
-export function checkProvenance(db: DB, blocks: Block[]): string[] {
+export function checkProvenance(db: DB, blocks: Block[], jobId: number | null = null): string[] {
   const problems: string[] = [];
   if (blocks.length === 0) return ["Document has no content"];
 
@@ -41,7 +51,7 @@ export function checkProvenance(db: DB, blocks: Block[]): string[] {
 
   blocks.forEach((b, i) => {
     const label = `Block ${i + 1} ("${b.text.slice(0, 40)}")`;
-    const numbers = (b.text.match(NUMBER) ?? []).map(clean);
+    const numbers = numberTokens(b.text);
 
     if ((b.kind ?? "claim") === "boilerplate") {
       if (b.factIds.length > 0) problems.push(`${label}: boilerplate must not cite facts`);
@@ -57,16 +67,59 @@ export function checkProvenance(db: DB, blocks: Block[]): string[] {
       problems.push(`${label}: unknown fact id(s) ${missing.join(", ")}`);
       return;
     }
+    const foreign = b.factIds.filter((id) => {
+      const f = found.get(id)!;
+      return f.jobId !== undefined && f.jobId !== jobId;
+    });
+    if (foreign.length > 0) {
+      problems.push(`${label}: fact(s) ${foreign.join(", ")} are reserved for a different job`);
+      return;
+    }
     const source = b.factIds.map((id) => `${found.get(id)!.text} ${found.get(id)!.dateRange ?? ""}`).join(" ");
+    const allowed = new Set(numberTokens(source));
     for (const n of numbers) {
-      if (!source.includes(n)) problems.push(`${label}: "${n}" does not appear in the cited facts`);
+      if (!allowed.has(n)) problems.push(`${label}: "${n}" does not appear in the cited facts`);
     }
   });
   return problems;
 }
 
+export interface SavedDocument {
+  id: number;
+  jobId: number | null;
+  kind: NewDocument["kind"];
+  version: number;
+  path: string;
+  factIds: number[];
+  blocks: Block[];
+  generatedAt: string;
+}
+
+const toDocument = (r: any): SavedDocument => ({
+  id: r.id,
+  jobId: r.job_id,
+  kind: r.kind,
+  version: r.version,
+  path: r.path,
+  factIds: JSON.parse(r.fact_ids_used),
+  blocks: JSON.parse(r.content),
+  generatedAt: r.generated_at,
+});
+
+export function getDocument(db: DB, id: number): SavedDocument | null {
+  const r = db.prepare("SELECT * FROM documents WHERE id = ?").get(id);
+  return r ? toDocument(r) : null;
+}
+
+export function listDocuments(db: DB, jobId: number | null): SavedDocument[] {
+  return db
+    .prepare("SELECT * FROM documents WHERE job_id IS ? ORDER BY kind, version")
+    .all(jobId)
+    .map(toDocument);
+}
+
 export function saveDocument(db: DB, doc: NewDocument, actor: Actor): { id: number; version: number } {
-  const problems = checkProvenance(db, doc.blocks);
+  const problems = checkProvenance(db, doc.blocks, doc.jobId);
   if (problems.length > 0) throw new ProvenanceError(problems);
 
   const factIds = [...new Set(doc.blocks.flatMap((b) => b.factIds))].sort((a, b) => a - b);
@@ -76,8 +129,8 @@ export function saveDocument(db: DB, doc: NewDocument, actor: Actor): { id: numb
       .get(doc.jobId, doc.kind) as { v: number | null };
     const version = (last.v ?? 0) + 1;
     const info = db
-      .prepare("INSERT INTO documents (job_id, kind, version, path, fact_ids_used) VALUES (?, ?, ?, ?, ?)")
-      .run(doc.jobId, doc.kind, version, doc.path, JSON.stringify(factIds));
+      .prepare("INSERT INTO documents (job_id, kind, version, path, fact_ids_used, content) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(doc.jobId, doc.kind, version, doc.path, JSON.stringify(factIds), JSON.stringify(doc.blocks));
     const id = Number(info.lastInsertRowid);
     logEvent(db, actor, "document_saved", doc.jobId, { id, kind: doc.kind, version });
     return { id, version };
