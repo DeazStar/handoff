@@ -92,7 +92,7 @@ describe("discovery flow", () => {
 describe("settings the agent respects", () => {
   it("shows the budget and the user's sites", async () => {
     const human = createHumanApi(db);
-    human.setPreferences({ roles: [], seniority: [], locations: [], remotePolicy: "any", industries: [], exclusions: [], dailyApplicationLimit: 5, dailyDiscoveryLimit: 2 });
+    human.setPreferences({ roles: [], seniority: [], locations: [], remotePolicy: "any", industries: [], exclusions: [], dailyApplicationLimit: 5, dailyDiscoveryLimit: 2, searchAnySite: true });
     human.addSource({ kind: "jobsite", name: "remoteok.com" });
     expect((await call("get_budget")).data).toEqual({ limit: 2, addedToday: 0, remaining: 2 });
     await call("add_candidate_job", job);
@@ -122,6 +122,18 @@ describe("settings the agent respects", () => {
     const names = (await client.listTools()).tools.map((t) => t.name);
     expect(names).not.toContain("set_source_enabled");
     expect(names).not.toContain("add_source_trusted");
+  });
+});
+
+describe("not opening the same dead link twice", () => {
+  it("remembers skipped links and recognises jobs", async () => {
+    expect((await call("check_candidate", { url: "https://old.example/jobs/9" })).data.known).toBeNull();
+    expect((await call("log_skipped_candidate", { url: "https://old.example/jobs/9?utm_source=x", reason: "dead", detail: "HTTP 410" })).data.logged).toBe(true);
+    expect((await call("check_candidate", { url: "https://old.example/jobs/9" })).data).toMatchObject({ known: "skipped", reason: "dead" });
+    const { data } = await call("add_candidate_job", job);
+    expect((await call("check_candidate", { url: job.url })).data).toMatchObject({ known: "job", jobId: data.id });
+    expect((await call("log_skipped_candidate", { url: "https://x.example/1", reason: "nonsense" })).error).toBe(true);
+    expect((await call("get_budget")).data.addedToday).toBe(1);
   });
 });
 

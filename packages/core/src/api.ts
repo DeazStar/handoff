@@ -1,4 +1,4 @@
-import { addCandidateJobWithinBudget, discoveryBudget, listSources, recordVerification, setMatch, setRoute, setSourceEnabled, upsertCompany, upsertSource, type Verification } from "./agentOps.js";
+import { addCandidateJobWithinBudget, checkCandidate, logSkippedCandidate, type SkipReason, discoveryBudget, listSources, recordVerification, setMatch, setRoute, setSourceEnabled, upsertCompany, upsertSource, type Verification } from "./agentOps.js";
 import { confirmGap, listOpenActions, queueAction, reportGap, resolveAction, type ActionKind, type GapReport } from "./actionQueue.js";
 import type { DB } from "./db.js";
 import { getDocument, listDocuments, saveDocument, type NewDocument } from "./documents.js";
@@ -43,6 +43,9 @@ export function createAgentApi(db: DB) {
       setRoute(db, jobId, route, opts, "agent"),
     listSources: () => listSources(db),
     discoveryBudget: () => discoveryBudget(db),
+    checkCandidate: (url: string) => checkCandidate(db, url),
+    logSkippedCandidate: (c: { url: string; reason: SkipReason; detail?: string; sourceId?: number }) =>
+      logSkippedCandidate(db, c, "agent"),
     reportGap: (jobId: number, gap: GapReport) => reportGap(db, jobId, gap, "agent"),
   };
 }

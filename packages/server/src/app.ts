@@ -168,6 +168,7 @@ export function createApp(db: DB, opts: { token: string }): Server {
       currency: optText(b.currency),
       dailyApplicationLimit: Number(b.dailyApplicationLimit),
       dailyDiscoveryLimit: Number(b.dailyDiscoveryLimit),
+      searchAnySite: b.searchAnySite !== false,
     });
     return { ok: true };
   });

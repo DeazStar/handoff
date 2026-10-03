@@ -3,7 +3,7 @@ import { createAgentApi, createHumanApi, listOpenActions, openDb, setPreferences
 
 const prefs = {
   roles: [], seniority: [], locations: [], remotePolicy: "any" as const, industries: [], exclusions: [],
-  dailyApplicationLimit: 5, dailyDiscoveryLimit: 3,
+  dailyApplicationLimit: 5, dailyDiscoveryLimit: 3, searchAnySite: true,
 };
 
 describe("discovery budget", () => {
@@ -87,5 +87,15 @@ describe("apply route", () => {
     agent.setRoute(id, "email");
     expect(listOpenActions(db)).toHaveLength(0);
     expect(() => agent.setRoute(999, "form")).toThrow(/not found/);
+  });
+});
+
+describe("search any site", () => {
+  it("is on by default and can be turned off", () => {
+    const db = openDb(":memory:");
+    setPreferences(db, prefs, "human");
+    expect(createAgentApi(db).getPreferences()?.searchAnySite).toBe(true);
+    setPreferences(db, { ...prefs, searchAnySite: false }, "human");
+    expect(createAgentApi(db).getPreferences()?.searchAnySite).toBe(false);
   });
 });

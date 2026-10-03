@@ -28,6 +28,8 @@ export interface Preferences {
   dailyApplicationLimit: number;
   /** Most new jobs one day's discovery may add. */
   dailyDiscoveryLimit: number;
+  /** True: search Google and any company career page as well as the listed sites. False: only the listed sites. */
+  searchAnySite: boolean;
 }
 
 /** Profile, facts and preferences are the user's own truth. The agent reads them, never writes them. */
@@ -90,6 +92,7 @@ export function getPreferences(db: DB): Preferences | null {
     currency: r.currency ?? undefined,
     dailyApplicationLimit: r.daily_application_limit,
     dailyDiscoveryLimit: r.daily_discovery_limit,
+    searchAnySite: r.search_any_site === 1,
   };
 }
 
@@ -110,15 +113,15 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
   }
   db.prepare(
     `INSERT INTO preferences (id, roles, seniority, locations, remote_policy, industries, exclusions,
-       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit, search_any_site)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        roles = excluded.roles, seniority = excluded.seniority, locations = excluded.locations,
        remote_policy = excluded.remote_policy, industries = excluded.industries,
        exclusions = excluded.exclusions, salary_floor = excluded.salary_floor,
        salary_target = excluded.salary_target, salary_ceiling = excluded.salary_ceiling,
        currency = excluded.currency, daily_application_limit = excluded.daily_application_limit,
-       daily_discovery_limit = excluded.daily_discovery_limit,
+       daily_discovery_limit = excluded.daily_discovery_limit, search_any_site = excluded.search_any_site,
        updated_at = datetime('now')`,
   ).run(
     JSON.stringify(p.roles),
@@ -133,6 +136,7 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
     p.currency ?? null,
     p.dailyApplicationLimit,
     p.dailyDiscoveryLimit,
+    p.searchAnySite === false ? 0 : 1,
   );
   logEvent(db, actor, "preferences_updated", null);
 }

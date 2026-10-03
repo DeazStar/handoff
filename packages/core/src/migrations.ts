@@ -267,4 +267,39 @@ ALTER TABLE preferences ADD COLUMN daily_discovery_limit INTEGER NOT NULL DEFAUL
 ALTER TABLE sources ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
 `,
   },
+  {
+    id: 7,
+    name: "search_any_site",
+    // 1: the agent may use Google and any career page. 0: only the sites the user listed.
+    sql: `ALTER TABLE preferences ADD COLUMN search_any_site INTEGER NOT NULL DEFAULT 1;`,
+  },
+  {
+    id: 8,
+    name: "skipped_candidates",
+    // Links the agent opened and rejected. Remembered so they are never opened twice, and counted per source.
+    sql: `
+CREATE TABLE skipped_candidates (
+  id INTEGER PRIMARY KEY,
+  canonical_url TEXT NOT NULL UNIQUE,
+  host TEXT NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN ('dead','closed','not_a_match','blocked','repost','other')),
+  detail TEXT,
+  source_id INTEGER REFERENCES sources(id),
+  at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+DROP VIEW source_stats;
+CREATE VIEW source_stats AS
+SELECT
+  s.id AS source_id,
+  s.name AS source_name,
+  COUNT(j.id) AS found,
+  SUM(CASE WHEN j.state = 'dead' THEN 1 ELSE 0 END) AS dead,
+  SUM(CASE WHEN j.state IN ('applied','replied','interview','offer','rejected','no_response') THEN 1 ELSE 0 END) AS applied,
+  SUM(CASE WHEN j.state IN ('replied','interview','offer') THEN 1 ELSE 0 END) AS replies,
+  (SELECT COUNT(*) FROM skipped_candidates k WHERE k.source_id = s.id) AS skipped
+FROM sources s LEFT JOIN jobs j ON j.source_id = s.id
+GROUP BY s.id;
+`,
+  },
 ];

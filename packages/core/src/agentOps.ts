@@ -1,6 +1,7 @@
 import type { DB } from "./db.js";
 import { addCandidateJob, findExistingJob, logEvent, transitionJob, type NewJob } from "./jobs.js";
 import { queueAction } from "./actionQueue.js";
+import { canonicalizeUrl } from "./normalize.js";
 import type { Actor, JobState } from "./states.js";
 
 export function upsertCompany(
@@ -189,4 +190,42 @@ export function addCandidateJobWithinBudget(db: DB, job: NewJob, actor: Actor): 
     }
     return addCandidateJob(db, job, actor);
   })();
+}
+
+export const SKIP_REASONS = ["dead", "closed", "not_a_match", "blocked", "repost", "other"] as const;
+export type SkipReason = (typeof SKIP_REASONS)[number];
+
+/** Remembers a link that was opened and rejected, so it is not opened again. Does not use budget. */
+export function logSkippedCandidate(
+  db: DB,
+  c: { url: string; reason: SkipReason; detail?: string; sourceId?: number },
+  actor: Actor,
+): void {
+  const canonicalUrl = canonicalizeUrl(c.url);
+  const host = new URL(canonicalUrl).hostname;
+  db.prepare(
+    `INSERT INTO skipped_candidates (canonical_url, host, reason, detail, source_id) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(canonical_url) DO UPDATE SET reason = excluded.reason, detail = excluded.detail,
+       source_id = COALESCE(excluded.source_id, skipped_candidates.source_id), at = datetime('now')`,
+  ).run(canonicalUrl, host, c.reason, c.detail ?? null, c.sourceId ?? null);
+  logEvent(db, actor, "candidate_skipped", null, { host, reason: c.reason });
+}
+
+export type CandidateStatus =
+  | { known: "job"; jobId: number; state: JobState; canonicalUrl: string }
+  | { known: "skipped"; reason: SkipReason; detail?: string; at: string; canonicalUrl: string }
+  | { known: null; canonicalUrl: string };
+
+/** Is this link already a job, or already rejected? Cheap, so check it before opening a page. */
+export function checkCandidate(db: DB, url: string): CandidateStatus {
+  const canonicalUrl = canonicalizeUrl(url);
+  const job = db.prepare("SELECT id, state FROM jobs WHERE canonical_url = ?").get(canonicalUrl) as
+    | { id: number; state: JobState }
+    | undefined;
+  if (job) return { known: "job", jobId: job.id, state: job.state, canonicalUrl };
+  const k = db.prepare("SELECT reason, detail, at FROM skipped_candidates WHERE canonical_url = ?").get(canonicalUrl) as
+    | { reason: SkipReason; detail: string | null; at: string }
+    | undefined;
+  if (k) return { known: "skipped", reason: k.reason, detail: k.detail ?? undefined, at: k.at, canonicalUrl };
+  return { known: null, canonicalUrl };
 }

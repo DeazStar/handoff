@@ -7,7 +7,7 @@ import {
 const prefs = {
   roles: ["Backend Engineer"], seniority: ["mid"], locations: ["Addis Ababa"], remotePolicy: "any" as const,
   industries: [], exclusions: [], salaryFloor: 1000, salaryTarget: 1500, salaryCeiling: 2000,
-  currency: "USD", dailyApplicationLimit: 5, dailyDiscoveryLimit: 10,
+  currency: "USD", dailyApplicationLimit: 5, dailyDiscoveryLimit: 10, searchAnySite: true,
 };
 
 describe("profile and preferences", () => {

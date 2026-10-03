@@ -220,7 +220,11 @@ async function settingsView() {
   const discovery = textField("Jobs to process per day", p.dailyDiscoveryLimit, { type: "number", min: "0", max: "200" });
   const applications = textField("Applications per day", p.dailyApplicationLimit, { type: "number", min: "0", max: "100" });
 
+  const anySite = h("input", { type: "checkbox" });
+  anySite.checked = p.searchAnySite !== false;
+
   const savePrefs = act(() => api("PUT", "/api/preferences", {
+    searchAnySite: anySite.checked,
     roles: roles.get(), seniority: level.get(), locations: where.get(), industries: industries.get(),
     exclusions: exclusions.get().split(",").map((x) => x.trim()).filter(Boolean),
     remotePolicy: remote.value,
@@ -234,6 +238,7 @@ async function settingsView() {
     h("div", { class: "card" }, roles.el, level.el, where.el,
       h("div", { class: "field" }, h("label", {}, "Remote policy"), remote),
       industries.el, exclusions.el,
+      h("div", { class: "field" }, h("label", {}, anySite, " Search any site: Google and company career pages, as well as the sites listed below. Untick to search only the listed sites.")),
       h("div", { class: "row" }, floor.el, target.el, ceiling.el, currency.el),
       h("h2", {}, "Daily limits"),
       h("div", { class: "muted" }, `Today: ${budget.addedToday} of ${budget.limit} jobs added.`),
@@ -246,7 +251,7 @@ async function settingsView() {
   const url = h("input", { placeholder: "https://... (optional)", style: "flex:1;min-width:200px" });
   view.append(
     h("h2", {}, "Sites to search"),
-    h("div", { class: "muted" }, "The agent searches Google and the sites you list here. Sites it finds on its own are shown below as agent-added and are not searched until you add them."),
+    h("div", { class: "muted" }, "Sites you list here are always searched when switched on. With \"Search any site\" ticked above, the agent also uses Google and company career pages. Sites it finds on its own show as agent-added and are not searched until you add them."),
     h("div", { class: "card" }, h("div", { class: "row" }, kind, name, url,
       h("button", { class: "primary", onclick: act(() => api("POST", "/api/sources", { kind: kind.value, name: name.value, url: url.value })) }, "Add"))),
     ...sources.map((src) => h("div", { class: "card" }, h("div", { class: "row" },

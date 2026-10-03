@@ -128,6 +128,10 @@ describe("settings api", () => {
     const p = await (await get("/api/preferences")).json();
     expect(p).toMatchObject({ roles: [], seniority: ["mid", "senior"], salaryFloor: 1000, salaryCeiling: 2000, dailyDiscoveryLimit: 8 });
     expect(p.salaryTarget).toBeUndefined();
+    expect(p.searchAnySite).toBe(true);
+    const off = await fetch(base + "/api/preferences", { method: "PUT", headers: json, body: JSON.stringify({ ...p, searchAnySite: false }) });
+    expect(off.status).toBe(200);
+    expect((await (await get("/api/preferences")).json()).searchAnySite).toBe(false);
   });
 
   it("rejects bad settings with 400", async () => {
