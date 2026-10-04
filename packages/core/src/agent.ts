@@ -11,3 +11,7 @@ export type { Block } from "./documents.js";
 export { SKIP_REASONS, type SkipReason } from "./agentOps.js";
 export type { CvPlan, ResolvedCv, BulletRef } from "./cvPlan.js";
 export type { CvMaterial, CvEntry } from "./cv.js";
+export { verifyContact, type VerifyResult } from "./contactVerify.js";
+export type { Contact } from "./email.js";
+export { verifyPerson, derivePatternContact, type PatternResult, type NameCheck, type VerifyDeps } from "./contactVerify.js";
+export type { Person, CompanyResearch } from "./research.js";

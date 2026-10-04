@@ -356,4 +356,68 @@ ALTER TABLE cv_entries ADD COLUMN employment_type TEXT CHECK (employment_type IN
 ALTER TABLE preferences ADD COLUMN employment_priority TEXT NOT NULL DEFAULT '[]';
 `,
   },
+  {
+    id: 13,
+    name: "emails",
+    // Contacts record where an address was found and whether it bounced. An email is a draft the agent writes
+    // (its body is a saved document, so every claim is checked against facts) and the user edits and sends.
+    sql: `
+ALTER TABLE contacts ADD COLUMN status TEXT NOT NULL DEFAULT 'ok' CHECK (status IN ('ok','bounced'));
+ALTER TABLE contacts ADD COLUMN verified_at TEXT;
+ALTER TABLE contacts ADD COLUMN added_by TEXT NOT NULL DEFAULT 'agent' CHECK (added_by IN ('agent','user'));
+
+CREATE TABLE emails (
+  id INTEGER PRIMARY KEY,
+  job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  subject TEXT NOT NULL,
+  body_document_id INTEGER NOT NULL REFERENCES documents(id),
+  body_text TEXT,
+  attachment_document_id INTEGER REFERENCES documents(id),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','sending','sent','failed','discarded')),
+  error TEXT,
+  message_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  sent_at TEXT
+);
+CREATE INDEX idx_emails_job ON emails(job_id);
+CREATE UNIQUE INDEX idx_emails_open ON emails(job_id, contact_id) WHERE status IN ('draft','sending');
+
+ALTER TABLE preferences ADD COLUMN bcc_self INTEGER NOT NULL DEFAULT 1;
+`,
+  },
+  {
+    id: 14,
+    name: "posting_details_and_people",
+    // The posting text is kept, so tailoring and emailing never reopen the page. People are the decision makers
+    // found on a company's own site. A contact is either seen on a page, derived from the company's address
+    // pattern (with its evidence), or typed by the user.
+    sql: `
+ALTER TABLE jobs ADD COLUMN description TEXT;
+ALTER TABLE jobs ADD COLUMN posted_by TEXT;
+ALTER TABLE jobs ADD COLUMN apply_url TEXT;
+ALTER TABLE jobs ADD COLUMN details_at TEXT;
+ALTER TABLE companies ADD COLUMN researched_at TEXT;
+
+CREATE TABLE people (
+  id INTEGER PRIMARY KEY,
+  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  role TEXT NOT NULL,
+  source_url TEXT NOT NULL,
+  found_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (company_id, name)
+);
+
+ALTER TABLE contacts ADD COLUMN person_id INTEGER REFERENCES people(id);
+ALTER TABLE contacts ADD COLUMN verification TEXT NOT NULL DEFAULT 'on_page' CHECK (verification IN ('on_page','pattern','user'));
+ALTER TABLE contacts ADD COLUMN evidence TEXT;
+UPDATE contacts SET verification = 'user' WHERE added_by = 'user';
+
+ALTER TABLE preferences ADD COLUMN research_min_score INTEGER NOT NULL DEFAULT 7;
+ALTER TABLE preferences ADD COLUMN research_scope TEXT NOT NULL DEFAULT 'all' CHECK (research_scope IN ('all','email_only','off'));
+ALTER TABLE preferences ADD COLUMN batch_size INTEGER NOT NULL DEFAULT 10;
+`,
+  },
 ];

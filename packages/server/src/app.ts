@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { readFileSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
-import { COUNTRIES, EMPLOYMENT_TYPES, FACT_KINDS, TransitionError, createHumanApi, orderForCv, type CvPlan, type DB, type JobState } from "@jobhunt/core";
+import { COUNTRIES, EMPLOYMENT_TYPES, FACT_KINDS, defaultVerifyDeps, verifyContact, type VerifyDeps, TransitionError, createHumanApi, orderForCv, type CvPlan, type DB, type JobState } from "@jobhunt/core";
 import { renderCvPdf } from "@jobhunt/render";
 import { VaultError, type Vault } from "@jobhunt/vault";
 import { MailError, type Mailer } from "./mail.js";
@@ -113,7 +113,7 @@ const int = (s: string) => {
   return n;
 };
 
-export function createApp(db: DB, opts: { token: string; dataDir: string; vault: Vault; mailer: Mailer }): Server {
+export function createApp(db: DB, opts: { token: string; dataDir: string; vault: Vault; mailer: Mailer; verifyDeps?: VerifyDeps }): Server {
   const vault = opts.vault;
   const mailer = opts.mailer;
   const human = createHumanApi(db);
@@ -141,8 +141,15 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
     const id = int(m[1]!);
     const detail = human.getJob(id);
     if (!detail) throw new HttpError(404, "Job not found");
+    const companyId = detail.job.companyId;
+    const research = companyId ? human.getCompanyResearch(companyId) : null;
     return {
       ...detail,
+      posting: human.getJobDescription(id),
+      people: research?.people ?? [],
+      researchedAt: research?.researchedAt,
+      contacts: companyId ? human.listContacts(companyId) : [],
+      emails: human.listEmails().filter((e) => e.jobId === id),
       documents: human.listDocuments(id),
       actions: human.listActionsDetailed().filter((a) => a.jobId === id),
       allowedTransitions: human.allowedTransitions(detail.job.state),
@@ -191,6 +198,10 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
       searchAnySite: b.searchAnySite !== false,
       cvGuidance: optText(b.cvGuidance),
       countryPriority: strings(b.countryPriority),
+      bccSelf: b.bccSelf !== false,
+      researchMinScore: b.researchMinScore === undefined || b.researchMinScore === "" ? undefined : Number(b.researchMinScore),
+      researchScope: b.researchScope,
+      batchSize: b.batchSize === undefined || b.batchSize === "" ? undefined : Number(b.batchSize),
       employmentPriority: strings(b.employmentPriority),
     });
     return { ok: true };
@@ -236,6 +247,67 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new HttpError(400, "Bad port");
     await vault.set("mail.smtp", JSON.stringify({ host, port, user, password }));
     return vault.status();
+  });
+
+
+  // ---- email applications: the user reviews, edits and sends. The agent can only draft. ----
+  route("GET", "/api/emails", (_m, _b, url) => human.listEmails(url.searchParams.get("status") ?? undefined));
+  route("GET", "/api/emails/(\\d+)", (m) => {
+    const e = human.getEmail(int(m[1]!));
+    if (!e) throw new HttpError(404, "Email not found");
+    return e;
+  });
+  route("PUT", "/api/emails/(\\d+)", (m, b) => (human.updateEmail(int(m[1]!), { subject: String(b.subject ?? ""), bodyText: String(b.bodyText ?? "") }), { ok: true }));
+  route("POST", "/api/emails/(\\d+)/discard", (m) => (human.discardEmail(int(m[1]!)), { ok: true }));
+  route("POST", "/api/emails/(\\d+)/send", async (m) => {
+    const id = int(m[1]!);
+    const email = human.getEmail(id);
+    if (!email) throw new HttpError(404, "Email not found");
+
+    // Everything that can be checked without touching the email comes first, so a missing step costs nothing.
+    const limit = human.getPreferences()?.dailyApplicationLimit ?? 5;
+    const today = human.applicationsToday();
+    if (today >= limit) throw new HttpError(429, `Daily limit reached (${today} of ${limit} applications today). Raise "Applications per day" in Settings to send more.`);
+    const st = vault.status();
+    if (!st.unlocked) throw new VaultError("locked", "Unlock the vault first (Vault page)");
+    if (!st.secrets!.some((x) => x.name === "mail.smtp")) throw new MailError("not_configured", "Save your mail app password in the Vault first");
+
+    const profile = human.getProfile();
+    if (!profile) throw new HttpError(400, "Set your name and email in Settings first");
+    const attachments: { filename: string; content: Buffer }[] = [];
+    if (email.attachment) {
+      const doc = human.getDocument(email.attachment.documentId);
+      const root = resolve(opts.dataDir, "documents") + sep;
+      const full = doc ? resolve(opts.dataDir, doc.path) : "";
+      if (!doc || !full.startsWith(root)) throw new HttpError(409, "The CV file for this email is missing. Run the tailoring again");
+      try { attachments.push({ filename: `${profile.fullName.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "CV"}-CV.pdf`, content: readFileSync(full) }); }
+      catch { throw new HttpError(409, "The CV file for this email is missing. Run the tailoring again"); }
+    }
+
+    human.beginSend(id); // claims it: a second click gets an error and sends nothing
+    try {
+      const bcc = human.getPreferences()?.bccSelf !== false && profile.email && profile.email.toLowerCase() !== email.contact.email ? [profile.email] : undefined;
+      const r = await mailer.send({ to: email.contact.email, subject: email.subject, text: email.bodyText, fromName: profile.fullName, bcc, attachments });
+      if (r.dryRun) {
+        human.releaseSend(id); // nothing was sent, so nothing changes
+        return { ok: true, dryRun: true };
+      }
+      human.finishSend(id, r.messageId);
+      return { ok: true, dryRun: false };
+    } catch (e) {
+      human.failSend(id, e instanceof MailError || e instanceof VaultError ? e.message : "Sending failed");
+      throw e;
+    }
+  });
+  route("POST", "/api/contacts/(\\d+)/bounced", (m) => (human.markContactBounced(int(m[1]!)), { ok: true }));
+  // An address the user types. Only the domain is checked, since there is no page to find it on.
+  route("POST", "/api/jobs/(\\d+)/contacts", async (m, b) => {
+    const job = human.getJob(int(m[1]!));
+    if (!job) throw new HttpError(404, "Job not found");
+    if (!job.job.companyId) throw new HttpError(409, "This job has no company recorded, so a contact cannot be attached");
+    const v = await verifyContact({ email: String(b.email ?? "") }, opts.verifyDeps ?? defaultVerifyDeps);
+    if (!v.ok) throw new HttpError(400, v.reason);
+    return { id: human.addContact({ companyId: job.job.companyId, email: v.email, name: optText(b.name), role: optText(b.role) }) };
   });
 
   // ---- CV ----

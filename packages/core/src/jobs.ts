@@ -11,7 +11,15 @@ export interface NewJob {
   remote?: boolean;
   postedAt?: string;
   descriptionHash?: string;
+  /** The posting's text, kept so later steps need not reopen the page. Untrusted: it came from the internet. */
+  description?: string;
+  /** Who the posting says posted it (a name or a role). */
+  postedBy?: string;
+  /** Where to apply, if different from the posting page. */
+  applyUrl?: string;
 }
+
+export const MAX_DESCRIPTION = 60_000;
 
 export function logEvent(
   db: DB,
@@ -49,8 +57,8 @@ export function addCandidateJob(db: DB, job: NewJob, actor: Actor = "agent"): { 
   if (existing !== undefined) return { id: existing, created: false };
   const info = db
     .prepare(
-      `INSERT INTO jobs (company_id, source_id, title, url, canonical_url, location, remote, posted_at, description_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO jobs (company_id, source_id, title, url, canonical_url, location, remote, posted_at, description_hash, description, posted_by, apply_url, details_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       job.companyId ?? null,
@@ -62,6 +70,10 @@ export function addCandidateJob(db: DB, job: NewJob, actor: Actor = "agent"): { 
       job.remote === undefined ? null : job.remote ? 1 : 0,
       job.postedAt ?? null,
       job.descriptionHash ?? null,
+      job.description?.trim() ? job.description.trim().slice(0, MAX_DESCRIPTION) : null,
+      job.postedBy?.trim().slice(0, 200) || null,
+      job.applyUrl?.trim() || null,
+      job.description?.trim() ? new Date().toISOString().slice(0, 19).replace("T", " ") : null,
     );
   const id = Number(info.lastInsertRowid);
   logEvent(db, actor, "job_added", id, { url: job.url });
@@ -90,4 +102,20 @@ export function transitionJob(
     db.prepare("UPDATE transition_guard SET job_id = NULL, to_state = NULL").run();
     logEvent(db, actor, "state_changed", jobId, { from: row.state, to, reason });
   })();
+}
+
+/** Saves or replaces the posting text and who posted it, for a job found before this was kept. */
+export function saveJobDetails(
+  db: DB,
+  jobId: number,
+  d: { description: string; postedBy?: string; applyUrl?: string },
+  actor: Actor,
+): void {
+  const text = d.description.trim();
+  if (text.length < 20) throw new Error("The description is too short to be a job posting");
+  const info = db
+    .prepare("UPDATE jobs SET description = ?, posted_by = COALESCE(?, posted_by), apply_url = COALESCE(?, apply_url), details_at = datetime('now') WHERE id = ?")
+    .run(text.slice(0, MAX_DESCRIPTION), d.postedBy?.trim().slice(0, 200) || null, d.applyUrl?.trim() || null, jobId);
+  if (info.changes === 0) throw new Error(`Job ${jobId} not found`);
+  logEvent(db, actor, "job_details_saved", jobId, { chars: Math.min(text.length, MAX_DESCRIPTION) });
 }

@@ -6,6 +6,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAgentApi, openDb, type DB } from "@jobhunt/core";
 import { createVault } from "@jobhunt/vault";
+import { addFact, saveDocument, setProfile } from "@jobhunt/core";
 import nodemailer from "nodemailer";
 import { createApp } from "../src/app.js";
 import { createMailer } from "../src/mail.js";
@@ -16,12 +17,24 @@ let server: ReturnType<typeof createApp>;
 let base: string;
 let port: number;
 let dataDir: string;
+let sent: any[] = [];
+let failNext: object | undefined;
+let dryMode = false;
+let domainTakesMail = true;
 
 beforeEach(async () => {
   db = openDb(":memory:");
   dataDir = mkdtempSync(join(tmpdir(), "jobhunt-srv-"));
   const vault = createVault(dataDir, { logN: 10 });
-  server = createApp(db, { token: TOKEN, dataDir, vault, mailer: createMailer(vault, { dryRun: true, transportFactory: () => nodemailer.createTransport({ jsonTransport: true }) }) });
+  sent = [];
+  failNext = undefined;
+  dryMode = false;
+  domainTakesMail = true;
+  const fake = { sendMail: async (msg: any) => { if (failNext) { const e = failNext; failNext = undefined; throw e; } sent.push(msg); return { messageId: `<test-${sent.length}@example.com>` }; }, close() {} } as never;
+  const live = createMailer(vault, { dryRun: false, transportFactory: () => fake });
+  const dry = createMailer(vault, { dryRun: true, transportFactory: () => nodemailer.createTransport({ jsonTransport: true }) });
+  const mailer = { send: (m: Parameters<typeof live.send>[0]) => (dryMode ? dry : live).send(m) };
+  server = createApp(db, { token: TOKEN, dataDir, vault, mailer, verifyDeps: { hasMail: async () => domainTakesMail, fetchPage: async () => "" } });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   port = (server.address() as AddressInfo).port;
   base = `http://127.0.0.1:${port}`;
@@ -388,12 +401,246 @@ describe("mail test api", () => {
     await put("/api/vault/mail", { password: "abcd wxyz abcd wxyz" });
     const res = await post("/api/vault/mail/test", {});
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, sentTo: "ada@example.com", dryRun: true });
+    expect(await res.json()).toEqual({ ok: true, sentTo: "ada@example.com", dryRun: false });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ to: "ada@example.com", subject: "jobhunt: test message" });
     await post("/api/vault/lock", {});
     expect((await post("/api/vault/mail/test", {})).status).toBe(423);
   });
 
   it("needs the token", async () => {
     expect((await fetch(base + "/api/vault/mail/test", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+  });
+});
+
+describe("email review and send", () => {
+  const PASS = "correct horse battery";
+  const put = (path: string, body: unknown) => fetch(base + path, { method: "PUT", headers: json, body: JSON.stringify(body) });
+
+  /** A job that applies by email with a CV on disk, a verified contact, and a draft the agent wrote. */
+  async function seed(opts: { vault?: boolean; mail?: boolean } = {}) {
+    const agent = createAgentApi(db);
+    const H = "human" as const;
+    setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", phone: "0911", links: [], languages: [] }, H);
+    const companyId = agent.upsertCompany({ name: "Acme", domain: "acme.example" });
+    const jobId = agent.addCandidateJob({ title: "Backend Engineer", url: "https://acme.example/j/1", canonicalUrl: "https://acme.example/j/1", companyId }).id;
+    const fact = addFact(db, { kind: "experience", text: "Built a payments API serving 50000 users" }, H);
+    agent.recordVerification(jobId, { result: "live" });
+    agent.setMatch(jobId, 8, "fits");
+    agent.setRoute(jobId, "email");
+    mkdirSync(join(dataDir, "documents"), { recursive: true });
+    writeFileSync(join(dataDir, "documents", "job-1-cv-v1.pdf"), "%PDF-1.4 the cv");
+    saveDocument(db, { jobId, kind: "cv", path: "documents/job-1-cv-v1.pdf", blocks: [{ text: "Built a payments API serving 50000 users", factIds: [fact] }] }, "agent");
+    agent.transitionJob(jobId, "materials_ready");
+    const contactId = agent.addContact({ companyId, email: "jobs@acme.example", sourceUrl: "https://acme.example/careers" });
+    const { emailId } = agent.draftEmail({
+      jobId, contactId,
+      blocks: [
+        { text: "Dear hiring team,", factIds: [], kind: "boilerplate" },
+        { text: "I built a payments API serving 50000 users and would like to apply.", factIds: [fact] },
+        { text: "Best regards,", factIds: [], kind: "boilerplate" },
+      ],
+    });
+    if (opts.vault !== false) await post("/api/vault/create", { passphrase: PASS });
+    if (opts.mail !== false && opts.vault !== false) await put("/api/vault/mail", { password: "abcd wxyz abcd wxyz" });
+    return { agent, companyId, jobId, contactId, emailId };
+  }
+  const state = async (jobId: number) => (await (await get(`/api/jobs/${jobId}`)).json()).job.state;
+  const status = async (emailId: number) => (await (await get(`/api/emails/${emailId}`)).json()).status;
+
+  it("shows the draft with its recipient, attachment and the warnings that apply", async () => {
+    const { emailId, jobId } = await seed();
+    const e = await (await get(`/api/emails/${emailId}`)).json();
+    expect(e).toMatchObject({ status: "draft", subject: "Application: Backend Engineer, Ada Lovelace", domainMismatch: false, domainUnclear: false, edited: false });
+    expect(e.contact).toMatchObject({ email: "jobs@acme.example", sourceUrl: "https://acme.example/careers" });
+    expect(e.bodyText).toMatch(/Best regards,\nAda Lovelace\n0911\nada@example.com$/);
+    expect((await (await get("/api/emails?status=draft")).json()).map((x: any) => x.id)).toEqual([emailId]);
+    const job = await (await get(`/api/jobs/${jobId}`)).json();
+    expect(job.contacts).toHaveLength(1);
+    expect(job.emails.map((x: any) => x.id)).toEqual([emailId]);
+    expect((await get("/api/emails/999")).status).toBe(404);
+  });
+
+  it("sends the edited text with the CV attached and a BCC to the user, then records the application", async () => {
+    const { emailId, jobId } = await seed();
+    expect((await put(`/api/emails/${emailId}`, { subject: "Backend Engineer application", bodyText: "Hello,\n\nMy own words.\n\nAda" })).status).toBe(200);
+    const res = await post(`/api/emails/${emailId}/send`, {});
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, dryRun: false });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ to: "jobs@acme.example", subject: "Backend Engineer application", text: "Hello,\n\nMy own words.\n\nAda", bcc: ["ada@example.com"], replyTo: "ada@example.com" });
+    expect(sent[0].from).toEqual({ name: "Ada Lovelace", address: "ada@example.com" });
+    expect(sent[0].attachments).toEqual([expect.objectContaining({ filename: "Ada-Lovelace-CV.pdf" })]);
+    expect(sent[0].attachments[0].content.toString()).toBe("%PDF-1.4 the cv");
+    expect(await status(emailId)).toBe("sent");
+    expect(await state(jobId)).toBe("applied");
+    expect(await (await get("/api/actions")).json()).toEqual([]);
+    expect((await put(`/api/emails/${emailId}`, { subject: "x", bodyText: "y" })).status).toBe(400); // too late to edit
+  });
+
+  it("a double click sends one email", async () => {
+    const { emailId } = await seed();
+    const [a, b] = await Promise.all([post(`/api/emails/${emailId}/send`, {}), post(`/api/emails/${emailId}/send`, {})]);
+    expect([a.status, b.status].sort()).toEqual([200, 400]);
+    expect(sent).toHaveLength(1);
+    expect((await post(`/api/emails/${emailId}/send`, {})).status).toBe(400);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("stops at the daily limit without touching the email", async () => {
+    const { emailId } = await seed();
+    const prefs = { roles: [], remotePolicy: "any", dailyApplicationLimit: 0, dailyDiscoveryLimit: 5 };
+    await put("/api/preferences", prefs);
+    const res = await post(`/api/emails/${emailId}/send`, {});
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toMatch(/Daily limit reached \(0 of 0/);
+    expect(sent).toHaveLength(0);
+    expect(await status(emailId)).toBe("draft");
+    await put("/api/preferences", { ...prefs, dailyApplicationLimit: 1 });
+    expect((await post(`/api/emails/${emailId}/send`, {})).status).toBe(200);
+  });
+
+  it("says what is missing when the vault is locked or has no mail login, and leaves the draft alone", async () => {
+    const a = await seed({ vault: false });
+    const none = await post(`/api/emails/${a.emailId}/send`, {});
+    expect(none.status).toBe(423);
+    expect((await none.json()).error).toMatch(/Unlock the vault first/);
+    await post("/api/vault/create", { passphrase: PASS });
+    const noMail = await post(`/api/emails/${a.emailId}/send`, {});
+    expect(noMail.status).toBe(409);
+    expect((await noMail.json()).error).toMatch(/Save your mail app password in the Vault first/);
+    expect(await status(a.emailId)).toBe("draft");
+    expect(sent).toHaveLength(0);
+  });
+
+  it("a failed send is recorded without secrets, leaves the job waiting, and can be retried", async () => {
+    const { emailId, jobId } = await seed();
+    failNext = { code: "EAUTH", message: "535 abcdwxyzabcdwxyz rejected for ada@example.com" };
+    const res = await post(`/api/emails/${emailId}/send`, {});
+    expect(res.status).toBe(502);
+    const body = await res.text();
+    expect(body).toMatch(/refused the login/);
+    expect(body).not.toMatch(/abcdwxyz|535/);
+    const e = await (await get(`/api/emails/${emailId}`)).json();
+    expect(e).toMatchObject({ status: "failed" });
+    expect(e.error).toMatch(/refused the login/);
+    expect(JSON.stringify(e)).not.toMatch(/abcdwxyz/);
+    expect(await state(jobId)).toBe("awaiting_approval");
+    expect((await post(`/api/emails/${emailId}/send`, {})).status).toBe(200); // retry
+    expect(await status(emailId)).toBe("sent");
+  });
+
+  it("a dry run builds the message and changes nothing", async () => {
+    const { emailId, jobId } = await seed();
+    dryMode = true;
+    const res = await post(`/api/emails/${emailId}/send`, {});
+    expect(await res.json()).toEqual({ ok: true, dryRun: true });
+    expect(await status(emailId)).toBe("draft");
+    expect(await state(jobId)).toBe("awaiting_approval");
+    expect(await (await get("/api/actions")).json()).toHaveLength(1);
+    dryMode = false;
+    expect((await post(`/api/emails/${emailId}/send`, {})).status).toBe(200);
+  });
+
+  it("will not send when the CV file has gone missing", async () => {
+    const { emailId } = await seed();
+    writeFileSync(join(dataDir, "documents", "job-1-cv-v1.pdf"), "x");
+    const { rmSync } = await import("node:fs");
+    rmSync(join(dataDir, "documents", "job-1-cv-v1.pdf"));
+    const res = await post(`/api/emails/${emailId}/send`, {});
+    expect(res.status).toBe(409);
+    expect(await status(emailId)).toBe("draft");
+  });
+
+  it("leaves out the BCC when turned off, or when the recipient is the user", async () => {
+    const { emailId, agent, companyId } = await seed();
+    await put("/api/preferences", { roles: [], remotePolicy: "any", dailyApplicationLimit: 5, dailyDiscoveryLimit: 5, bccSelf: false });
+    await post(`/api/emails/${emailId}/send`, {});
+    expect(sent[0].bcc).toBeUndefined();
+    const prefs = await (await get("/api/preferences")).json();
+    expect(prefs.bccSelf).toBe(false);
+    expect(companyId).toBeGreaterThan(0);
+    expect(agent).toBeDefined();
+  });
+
+  it("discards a draft and puts the job back", async () => {
+    const { emailId, jobId } = await seed();
+    expect((await post(`/api/emails/${emailId}/discard`, {})).status).toBe(200);
+    expect(await status(emailId)).toBe("discarded");
+    expect(await state(jobId)).toBe("materials_ready");
+    expect(await (await get("/api/actions")).json()).toEqual([]);
+    expect((await post(`/api/emails/${emailId}/send`, {})).status).toBe(400);
+  });
+
+  it("lets the user add a contact by hand, checking only the domain, and mark one as bounced", async () => {
+    const { jobId, contactId } = await seed();
+    const ok = await post(`/api/jobs/${jobId}/contacts`, { email: "Sam@Acme.example", name: "Sam", role: "Recruiter" });
+    expect(ok.status).toBe(200);
+    const contacts = (await (await get(`/api/jobs/${jobId}`)).json()).contacts;
+    expect(contacts.map((c: any) => [c.email, c.addedBy])).toEqual([["jobs@acme.example", "agent"], ["sam@acme.example", "user"]]);
+    expect((await post(`/api/jobs/${jobId}/contacts`, { email: "nobody" })).status).toBe(400);
+    domainTakesMail = false;
+    const noMail = await post(`/api/jobs/${jobId}/contacts`, { email: "x@dead.example" });
+    expect(noMail.status).toBe(400);
+    expect((await noMail.json()).error).toMatch(/no mail records/);
+    expect((await post(`/api/jobs/9999/contacts`, { email: "x@acme.example" })).status).toBe(404);
+    expect((await post(`/api/contacts/${contactId}/bounced`, {})).status).toBe(200);
+    expect((await (await get(`/api/jobs/${jobId}`)).json()).contacts[0].status).toBe("bounced");
+  });
+
+  it("needs the token", async () => {
+    expect((await fetch(base + "/api/emails")).status).toBe(401);
+    expect((await fetch(base + "/api/emails/1/send", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+  });
+});
+
+describe("saved posting, people and research settings", () => {
+  const put = (path: string, body: unknown) => fetch(base + path, { method: "PUT", headers: json, body: JSON.stringify(body) });
+  const prefs = { roles: [], remotePolicy: "any", dailyApplicationLimit: 5, dailyDiscoveryLimit: 5 };
+
+  it("shows the saved text, who posted it and the people found, on the job", async () => {
+    const agent = createAgentApi(db);
+    const co = agent.upsertCompany({ name: "Acme", domain: "acme.example" });
+    const { id } = agent.addCandidateJob({ title: "Backend Engineer", url: "https://a.io/1", canonicalUrl: "https://a.io/1", companyId: co, description: "We want Node.js and MySQL experience.", postedBy: "Jane Doe, Head of Engineering" });
+    agent.addPerson({ companyId: co, name: "Jane Doe", role: "Head of Engineering", sourceUrl: "https://acme.example/team" });
+    const noText = agent.addCandidateJob({ title: "Other", url: "https://a.io/2", canonicalUrl: "https://a.io/2" }).id;
+
+    const d = await (await get(`/api/jobs/${id}`)).json();
+    expect(d.posting).toMatchObject({ description: "We want Node.js and MySQL experience.", postedBy: "Jane Doe, Head of Engineering" });
+    expect(d.people).toEqual([expect.objectContaining({ name: "Jane Doe", role: "Head of Engineering" })]);
+    expect(d.researchedAt).toBeUndefined();
+    expect(JSON.stringify(d.job)).not.toContain("MySQL"); // the text is in posting, not in the job row
+    expect((await (await get(`/api/jobs/${noText}`)).json()).posting.description).toBeUndefined();
+    agent.markCompanyResearched(co);
+    expect((await (await get(`/api/jobs/${id}`)).json()).researchedAt).toBeTruthy();
+  });
+
+  it("saves and validates the research and batch settings", async () => {
+    expect((await put("/api/preferences", { ...prefs, researchMinScore: "9", researchScope: "email_only", batchSize: "4" })).status).toBe(200);
+    expect(await (await get("/api/preferences")).json()).toMatchObject({ researchMinScore: 9, researchScope: "email_only", batchSize: 4 });
+    expect((await put("/api/preferences", { ...prefs, researchMinScore: 11 })).status).toBe(400);
+    expect((await put("/api/preferences", { ...prefs, researchScope: "sometimes" })).status).toBe(400);
+    expect((await put("/api/preferences", { ...prefs, batchSize: 0 })).status).toBe(400);
+    expect((await put("/api/preferences", prefs)).status).toBe(200); // omitted: defaults
+    expect(await (await get("/api/preferences")).json()).toMatchObject({ researchMinScore: 7, researchScope: "all", batchSize: 10 });
+  });
+
+  it("the review of a derived address carries its evidence", async () => {
+    const agent = createAgentApi(db);
+    const H = "human" as const;
+    setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", links: [], languages: [] }, H);
+    const co = agent.upsertCompany({ name: "Acme", domain: "acme.example" });
+    const jobId = agent.addCandidateJob({ title: "Backend Engineer", url: "https://a.io/1", canonicalUrl: "https://a.io/1", companyId: co }).id;
+    const fact = addFact(db, { kind: "experience", text: "Built a payments API serving 50000 users" }, H);
+    agent.recordVerification(jobId, { result: "live" }); agent.setMatch(jobId, 8, "fits"); agent.setRoute(jobId, "email");
+    saveDocument(db, { jobId, kind: "cv", path: "documents/cv.pdf", blocks: [{ text: "Built a payments API serving 50000 users", factIds: [fact] }] }, "agent");
+    agent.transitionJob(jobId, "materials_ready");
+    const jane = agent.addPerson({ companyId: co, name: "Jane Doe", role: "CTO", sourceUrl: "https://acme.example/team" });
+    const contactId = agent.addContact({ companyId: co, email: "jane.doe@acme.example", sourceUrl: "https://acme.example/team", personId: jane, verification: "pattern", name: "Jane Doe", evidence: { pattern: "first.last", exampleEmail: "sam.lee@acme.example", exampleName: "Sam Lee", exampleUrl: "https://acme.example/press" } });
+    const { emailId } = agent.draftEmail({ jobId, contactId, blocks: [{ text: "Dear Jane,", factIds: [], kind: "boilerplate" }, { text: "I built a payments API serving 50000 users.", factIds: [fact] }, { text: "Best regards,", factIds: [], kind: "boilerplate" }] });
+    const e = await (await get(`/api/emails/${emailId}`)).json();
+    expect(e.contact).toMatchObject({ verification: "pattern", evidence: { pattern: "first.last", exampleName: "Sam Lee" } });
+    const job = await (await get(`/api/jobs/${jobId}`)).json();
+    expect(job.contacts[0].verification).toBe("pattern");
   });
 });

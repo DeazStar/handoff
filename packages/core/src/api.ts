@@ -1,3 +1,7 @@
+import { addPerson, getCompanyResearch, listPeople, markCompanyResearched } from "./research.js";
+import { getJobDescription } from "./queries.js";
+import { saveJobDetails } from "./jobs.js";
+import { addContact, applicationsToday, beginSend, discardEmail, draftEmail, failSend, finishSend, getContact, getEmail, listContacts, listEmails, markContactBounced, noContactFound, releaseSend, updateEmail, type DraftInput } from "./email.js";
 import { addCandidateJobWithinBudget, checkCandidate, logSkippedCandidate, type SkipReason, discoveryBudget, listSources, recordVerification, setMatch, setRoute, setSourceEnabled, upsertCompany, upsertSource, type Verification } from "./agentOps.js";
 import { confirmGap, listOpenActions, queueAction, reportGap, resolveAction, type ActionKind, type GapReport } from "./actionQueue.js";
 import type { DB } from "./db.js";
@@ -40,6 +44,17 @@ export function createAgentApi(db: DB) {
     prepareCv: (plan: CvPlan, jobId: number | null) => prepareCv(db, plan, jobId),
     listJobs: (state?: JobState) => listJobs(db, { state }),
     getJob: (id: number) => getJob(db, id),
+    // Contacts and drafts. The agent can add a verified contact and write a draft; it can never send.
+    addContact: (c: { companyId: number; email: string; name?: string; role?: string; sourceUrl: string; personId?: number; verification?: "on_page" | "pattern"; evidence?: { pattern: string; exampleEmail: string; exampleName: string; exampleUrl: string } }) => addContact(db, c, "agent"),
+    listContacts: (companyId: number) => listContacts(db, companyId),
+    addPerson: (p: { companyId: number; name: string; role: string; sourceUrl: string }) => addPerson(db, p, "agent"),
+    listPeople: (companyId: number) => listPeople(db, companyId),
+    getCompanyResearch: (companyId: number) => getCompanyResearch(db, companyId),
+    markCompanyResearched: (companyId: number) => markCompanyResearched(db, companyId, "agent"),
+    getJobDescription: (jobId: number) => getJobDescription(db, jobId),
+    saveJobDetails: (jobId: number, d: { description: string; postedBy?: string; applyUrl?: string }) => saveJobDetails(db, jobId, d, "agent"),
+    draftEmail: (d: DraftInput) => draftEmail(db, d, "agent"),
+    noContactFound: (jobId: number, detail?: string) => noContactFound(db, jobId, detail, "agent"),
     upsertCompany: (c: Parameters<typeof upsertCompany>[1]) => upsertCompany(db, c, "agent"),
     upsertSource: (s: Parameters<typeof upsertSource>[1]) => upsertSource(db, s, "agent"),
     recordVerification: (jobId: number, v: Verification) => recordVerification(db, jobId, v, "agent"),
@@ -87,6 +102,21 @@ export function createHumanApi(db: DB) {
     prepareCv: (plan: CvPlan, jobId: number | null) => prepareCv(db, plan, jobId),
     getProfile: () => getProfile(db),
     getPreferences: () => getPreferences(db),
+    addContact: (c: { companyId: number; email: string; name?: string; role?: string }) => addContact(db, c, "human"),
+    listContacts: (companyId: number) => listContacts(db, companyId),
+    getContact: (id: number) => getContact(db, id),
+    getCompanyResearch: (companyId: number) => getCompanyResearch(db, companyId),
+    getJobDescription: (jobId: number) => getJobDescription(db, jobId),
+    markContactBounced: (id: number) => markContactBounced(db, id, "human"),
+    getEmail: (id: number) => getEmail(db, id),
+    listEmails: (status?: string) => listEmails(db, { status }),
+    updateEmail: (id: number, edit: { subject: string; bodyText: string }) => updateEmail(db, id, edit, "human"),
+    discardEmail: (id: number) => discardEmail(db, id, "human"),
+    beginSend: (id: number) => beginSend(db, id, "human"),
+    finishSend: (id: number, messageId: string) => finishSend(db, id, messageId, "human"),
+    failSend: (id: number, message: string) => failSend(db, id, message, "human"),
+    releaseSend: (id: number) => releaseSend(db, id, "human"),
+    applicationsToday: () => applicationsToday(db),
     listJobs: (state?: JobState) => listJobs(db, { state }),
     getJob: (id: number) => getJob(db, id),
     listActionsDetailed: () => listActionsDetailed(db),

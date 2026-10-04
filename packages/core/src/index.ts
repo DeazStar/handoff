@@ -21,3 +21,13 @@ export {
 export { prepareCv, orderForCv, type CvPlan, type ResolvedCv, type BulletRef } from "./cvPlan.js";
 export { nextDocumentVersion } from "./documents.js";
 export { COUNTRIES, canonicalCountry, requireCountry, type Country } from "./countries.js";
+export {
+  addContact, listContacts, getContact, markContactBounced, noContactFound, draftEmail, composeBody, getEmail, listEmails,
+  updateEmail, discardEmail, beginSend, finishSend, failSend, releaseSend, applicationsToday,
+  type Contact, type DraftInput, type EmailDetail,
+} from "./email.js";
+export { verifyContact, pageShowsEmail, isPrivateAddress, defaultVerifyDeps, type VerifyDeps, type VerifyResult } from "./contactVerify.js";
+export { addPerson, listPeople, getCompanyResearch, markCompanyResearched, type Person, type CompanyResearch } from "./research.js";
+export { getJobDescription, type JobDetails } from "./queries.js";
+export { saveJobDetails, MAX_DESCRIPTION } from "./jobs.js";
+export { verifyPerson, derivePatternContact, pageShowsName, inferPattern, deriveAddress, splitName, ADDRESS_PATTERNS, type PatternResult, type NameCheck } from "./contactVerify.js";

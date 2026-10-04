@@ -23,7 +23,7 @@ const TRANSITIONS: Record<JobState, Partial<Record<JobState, Actor[]>>> = {
   verified_live: { matched: ["agent", "system"], skipped: ["agent", "human"], dead: ["agent", "system"] },
   matched: { materials_ready: ["agent", "system"], skipped: ["agent", "human"], dead: ["agent", "system"] },
   materials_ready: { awaiting_approval: ["agent", "system"], skipped: ["agent", "human"], dead: ["agent", "system"] },
-  awaiting_approval: { applied: ["human"], skipped: ["human"], dead: ["agent", "human"] },
+  awaiting_approval: { applied: ["human"], materials_ready: ["human"], skipped: ["human"], dead: ["agent", "human"] },
   applied: { replied: ["agent", "human"], no_response: ["agent", "human", "system"], rejected: ["agent", "human"] },
   replied: { interview: ["human"], rejected: ["agent", "human"] },
   interview: { offer: ["human"], rejected: ["human"] },

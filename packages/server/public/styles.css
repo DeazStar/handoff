@@ -34,3 +34,5 @@ td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line
 .field input:not([type=checkbox]) { width: 100%; }
 .row .field { flex: 1; min-width: 120px; margin-bottom: 0; }
 .row label { display: inline-flex; align-items: center; gap: 4px; }
+.bad { color: var(--bad); }
+.warn { color: var(--warn); }

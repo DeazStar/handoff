@@ -35,6 +35,14 @@ export interface Preferences {
   cvGuidance?: string;
   /** Countries, best first. Work from an earlier country is listed before work from a later one. */
   countryPriority?: string[];
+  /** Send the user a copy of every email they send. Default true. */
+  bccSelf?: boolean;
+  /** Search a company's own pages for decision makers when a job scores at least this (0 to 10). Default 7. */
+  researchMinScore?: number;
+  /** all: any job above the score. email_only: only jobs that apply by email. off: never. Default all. */
+  researchScope?: "all" | "email_only" | "off";
+  /** Most jobs one /tailor or /email run handles. Default 10. */
+  batchSize?: number;
   /** Employment types (full_time, part_time, contract, freelance), best first. Used after country priority. */
   employmentPriority?: string[];
 }
@@ -122,6 +130,10 @@ export function getPreferences(db: DB): Preferences | null {
     cvGuidance: r.cv_guidance ?? undefined,
     countryPriority: JSON.parse(r.country_priority ?? "[]"),
     employmentPriority: JSON.parse(r.employment_priority ?? "[]"),
+    bccSelf: r.bcc_self !== 0,
+    researchMinScore: r.research_min_score,
+    researchScope: r.research_scope,
+    batchSize: r.batch_size,
   };
 }
 
@@ -141,20 +153,25 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
   ] as const) {
     if (!Number.isInteger(n) || n < 0 || n > max) throw new Error(`${name} must be a whole number from 0 to ${max}`);
   }
+  const rs = p.researchMinScore ?? 7;
+  if (!Number.isInteger(rs) || rs < 0 || rs > 10) throw new Error("researchMinScore must be a whole number from 0 to 10");
+  if (!["all", "email_only", "off"].includes(p.researchScope ?? "all")) throw new Error("researchScope must be all, email_only or off");
+  const bs = p.batchSize ?? 10;
+  if (!Number.isInteger(bs) || bs < 1 || bs > 20) throw new Error("batchSize must be a whole number from 1 to 20");
   const types = dedupeList(p.employmentPriority ?? []).map((t) => t.toLowerCase());
   const bad = types.find((t) => !EMPLOYMENT_TYPES.includes(t as EmploymentType));
   if (bad) throw new Error(`Employment priority can list full_time, part_time, contract and freelance, not "${bad}"`);
   db.prepare(
     `INSERT INTO preferences (id, roles, seniority, locations, remote_policy, industries, exclusions,
-       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit, search_any_site, cv_guidance, country_priority, employment_priority)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit, search_any_site, cv_guidance, country_priority, employment_priority, bcc_self, research_min_score, research_scope, batch_size)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        roles = excluded.roles, seniority = excluded.seniority, locations = excluded.locations,
        remote_policy = excluded.remote_policy, industries = excluded.industries,
        exclusions = excluded.exclusions, salary_floor = excluded.salary_floor,
        salary_target = excluded.salary_target, salary_ceiling = excluded.salary_ceiling,
        currency = excluded.currency, daily_application_limit = excluded.daily_application_limit,
-       daily_discovery_limit = excluded.daily_discovery_limit, search_any_site = excluded.search_any_site, cv_guidance = excluded.cv_guidance, country_priority = excluded.country_priority, employment_priority = excluded.employment_priority,
+       daily_discovery_limit = excluded.daily_discovery_limit, search_any_site = excluded.search_any_site, cv_guidance = excluded.cv_guidance, country_priority = excluded.country_priority, employment_priority = excluded.employment_priority, bcc_self = excluded.bcc_self, research_min_score = excluded.research_min_score, research_scope = excluded.research_scope, batch_size = excluded.batch_size,
        updated_at = datetime('now')`,
   ).run(
     JSON.stringify(p.roles),
@@ -173,6 +190,10 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
     p.cvGuidance?.trim() || null,
     JSON.stringify(cleanCountries(p.countryPriority ?? [])),
     JSON.stringify(types),
+    p.bccSelf === false ? 0 : 1,
+    p.researchMinScore ?? 7,
+    p.researchScope ?? "all",
+    p.batchSize ?? 10,
   );
   logEvent(db, actor, "preferences_updated", null);
 }
