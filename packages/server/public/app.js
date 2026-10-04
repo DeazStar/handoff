@@ -9,6 +9,8 @@ function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
     if (k === "class") el.className = v;
+    // The page policy forbids inline style attributes, so styles go through the style object.
+    else if (k === "style") el.style.cssText = v;
     else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else if (v !== undefined && v !== false) el.setAttribute(k, v === true ? "" : v);
   }
@@ -99,7 +101,7 @@ async function pipelineView() {
   for (const [state, list] of Object.entries(byState)) {
     view.append(h("h2", {}, `${label(state)} (${list.length})`));
     view.append(h("table", {}, list.map((j) => h("tr", {},
-      h("td", {}, h("a", { href: `#/jobs/${j.id}` }, j.title), h("div", { class: "muted" }, j.company || "")),
+      h("td", {}, h("a", { href: `#/jobs/${j.id}` }, j.title), h("span", { class: "muted" }, `  #${j.id}`), h("div", { class: "muted" }, j.company || "")),
       h("td", { class: "muted" }, j.matchScore !== undefined ? `${j.matchScore}` : ""),
       h("td", { class: "muted" }, j.source || "")))));
   }
@@ -110,7 +112,7 @@ async function jobView(id) {
   const j = d.job;
   view.replaceChildren(...[
     h("p", {}, h("a", { href: "#/pipeline" }, "← pipeline")),
-    h("h1", {}, j.title),
+    h("h1", {}, j.title, h("span", { class: "muted" }, `  #${j.id}`)),
     h("div", { class: "row" },
       h("span", { class: "badge" }, label(j.state)), h("span", { class: "badge" }, `route: ${j.route}`),
       j.company && h("span", { class: "muted" }, j.company),
@@ -137,11 +139,24 @@ async function jobView(id) {
 
   view.append(h("h2", {}, "Documents"));
   if (!d.documents.length) view.append(h("div", { class: "muted" }, "None yet."));
-  for (const doc of d.documents) {
-    view.append(h("div", { class: "card" },
-      h("div", { class: "row" }, h("span", { class: "badge" }, `${doc.kind} v${doc.version}`), h("span", { class: "muted" }, doc.path)),
-      doc.blocks.map((b) => h("p", { class: b.kind === "boilerplate" ? "muted" : "" }, b.text,
-        b.factIds.length ? h("span", { class: "muted" }, `  [facts ${b.factIds.join(", ")}]`) : null))));
+  const docCard = (doc) => h("div", { class: "card" },
+    h("div", { class: "row" }, h("span", { class: "badge" }, `${doc.kind} v${doc.version}`), h("span", { class: "muted" }, doc.path),
+      doc.path.toLowerCase().endsWith(".pdf") && h("a", { href: `/api/documents/${doc.id}/file`, target: "_blank", rel: "noopener noreferrer" }, "Open PDF"),
+      h("button", { class: "danger", onclick: act(async () => {
+        if (!confirm(`Delete ${doc.kind} v${doc.version} and its file? This cannot be undone.`)) return;
+        await api("DELETE", `/api/documents/${doc.id}`, {});
+      }) }, "Delete")),
+    doc.blocks.map((b) => h("p", { class: b.kind === "boilerplate" ? "muted" : "" }, b.text,
+      b.factIds.length ? h("span", { class: "muted" }, `  [facts ${b.factIds.join(", ")}]`) : null)));
+  // The newest version of each kind is shown; older versions are folded away so they do not look like repeats.
+  const kinds = [...new Set(d.documents.map((x) => x.kind))];
+  for (const kind of kinds) {
+    const versions = d.documents.filter((x) => x.kind === kind).sort((a, b) => b.version - a.version);
+    view.append(docCard(versions[0]));
+    if (versions.length > 1) {
+      view.append(h("details", {}, h("summary", { class: "muted" }, `Older ${kind} versions (${versions.length - 1})`),
+        ...versions.slice(1).map(docCard)));
+    }
   }
 
   view.append(h("h2", {}, "History"));
@@ -175,6 +190,152 @@ async function factsView() {
   }
 }
 
+
+
+// ---------- CV ----------
+
+const ENTRY_LABELS = {
+  work: { add: "Add a job", title: "Job title", org: "Company", note: "Shown after the location, e.g. Contract, Part-time, Co-founder (optional)" },
+  project: { add: "Add a project", title: "Project name", org: "Link or context (optional)", note: "One-line description (optional)" },
+  education: { add: "Add education", title: "Degree", org: "School", note: "Notes, e.g. GPA (optional)" },
+};
+
+function dateText(e) {
+  const end = e.isCurrent ? "Present" : e.endDate || "";
+  return [e.startDate, end].filter(Boolean).join(" to ");
+}
+
+function entryForm(kind, e, submit) {
+  const L = ENTRY_LABELS[kind];
+  const f = {
+    title: textField(L.title, e?.title),
+    org: textField(L.org, e?.organization),
+    where: textField("Location (optional)", e?.location),
+    start: textField("Start (2022 or 2022-03)", e?.startDate),
+    end: textField("End (leave empty if current)", e?.endDate),
+    note: textField(L.note, e?.note),
+  };
+  const country = h("select", {}, [["", "Not set"], ...lists.countries.map((c) => [c, c])].map(([v, t]) => h("option", { value: v }, t)));
+  country.value = e?.country || "";
+  const current = h("input", { type: "checkbox" });
+  current.checked = e?.isCurrent === true;
+  const empType = h("select", {}, [["", "Not set"], ["full_time", "Full-time"], ["part_time", "Part-time"], ["contract", "Contract"], ["freelance", "Freelance"]].map(([v, t]) => h("option", { value: v }, t)));
+  empType.value = e?.employmentType || "";
+  const weight = h("select", {}, [["normal", "Let the agent decide"], ["always", "Always include"], ["lead", "Lead with this"]].map(([v, t]) => h("option", { value: v }, t)));
+  weight.value = e?.weight || "normal";
+  const body = () => ({
+    kind, title: f.title.get(), organization: f.org.get(), location: f.where.get(),
+    startDate: f.start.get(), endDate: f.end.get(), isCurrent: current.checked, note: f.note.get(), weight: weight.value, country: country.value, employmentType: empType.value,
+  });
+  const parts = [f.title.el, f.org.el, f.where.el];
+  if (kind !== "project") parts.push(h("div", { class: "row" }, f.start.el, f.end.el, h("label", { class: "muted" }, current, " Current")));
+  if (kind !== "education") parts.push(h("div", { class: "field" }, h("label", {}, "Country the work was for"), country));
+  if (kind === "work") parts.push(h("div", { class: "field" }, h("label", {}, "Type of work"), empType));
+  parts.push(f.note.el,
+    h("div", { class: "field" }, h("label", {}, "On tailored CVs"), weight),
+    h("button", { class: "primary", onclick: act(() => submit(body())) }, "Save"));
+  return h("div", {}, parts);
+}
+
+function bulletRow(b) {
+  const row = h("div", { class: "row", style: "align-items:flex-start;margin:4px 0;flex-wrap:nowrap" });
+  const show = () => {
+    row.replaceChildren(
+      h("span", { style: "flex:1" }, "• " + b.text),
+      h("button", { onclick: edit }, "Edit"),
+      h("button", { class: "danger", onclick: act(() => api("DELETE", `/api/facts/${b.id}`, {})) }, "Delete"));
+  };
+  const edit = () => {
+    const t = h("textarea", {});
+    t.value = b.text;
+    row.replaceChildren(t,
+      h("button", { class: "primary", onclick: act(() => api("PUT", `/api/cv/bullets/${b.id}`, { text: t.value })) }, "Save"),
+      h("button", { onclick: show }, "Cancel"));
+  };
+  show();
+  return row;
+}
+
+function entryCard(e) {
+  const meta = [e.organization, e.location, e.country && `country: ${e.country}`, e.employmentType && e.employmentType.replace("_", "-"), dateText(e)].filter(Boolean).join("  |  ");
+  const card = h("div", { class: "card" },
+    h("div", { class: "row" },
+      h("strong", { style: "flex:1" }, e.title),
+      h("button", { onclick: act(() => api("POST", `/api/cv/entries/${e.id}/move`, { direction: "up" })) }, "↑"),
+      h("button", { onclick: act(() => api("POST", `/api/cv/entries/${e.id}/move`, { direction: "down" })) }, "↓"),
+      h("button", { class: "danger", onclick: act(() => api("DELETE", `/api/cv/entries/${e.id}`, {})) }, "Delete")),
+    meta && h("div", { class: "muted" }, meta),
+    e.note && h("div", { class: "muted" }, e.note),
+    !e.startDate && e.kind === "work" && h("div", { class: "muted", style: "color:var(--warn)" }, "No dates yet. Edit this entry to add them."),
+    h("details", { style: "margin:8px 0" }, h("summary", { class: "muted" }, "Edit details"),
+      entryForm(e.kind, e, (body) => api("PUT", `/api/cv/entries/${e.id}`, body))));
+  if (e.kind !== "education") {
+    for (const b of e.bullets) card.append(bulletRow(b));
+    const t = h("textarea", { placeholder: "Add a bullet: one true statement, with real numbers" });
+    card.append(h("div", { style: "margin-top:6px" }, t,
+      h("button", { onclick: act(() => api("POST", `/api/cv/entries/${e.id}/bullets`, { text: t.value })) }, "Add bullet")));
+  }
+  return card;
+}
+
+function skillGroupCard(g) {
+  const input = h("input", { style: "flex:1;min-width:200px" });
+  input.value = g.skills.map((s) => s.text).join(", ");
+  return h("div", { class: "card" }, h("div", { class: "row" }, h("strong", {}, g.group), input,
+    h("button", { class: "primary", onclick: act(() => api("PUT", "/api/cv/skills", { group: g.group, items: input.value.split(",") })) }, "Save"),
+    h("button", { class: "danger", onclick: act(() => api("PUT", "/api/cv/skills", { group: g.group, items: [] })) }, "Remove group")));
+}
+
+async function cvView() {
+  const m = await api("GET", "/api/cv");
+  view.replaceChildren(
+    h("h1", {}, "CV"),
+    h("p", { class: "muted" }, "Your jobs, projects, education and skills. Tailored CVs are built from these and nothing else, so keep them true and complete."),
+    h("div", { class: "row" },
+      h("a", { href: "/api/cv/preview.pdf", target: "_blank", rel: "noopener noreferrer" }, "Preview the whole CV as a PDF")));
+  const sections = [["work", "Work experience"], ["project", "Projects"], ["education", "Education"]];
+  for (const [kind, title] of sections) {
+    view.append(h("h2", {}, title));
+    view.append(h("details", { class: "card" }, h("summary", {}, ENTRY_LABELS[kind].add),
+      entryForm(kind, null, (body) => api("POST", "/api/cv/entries", body))));
+    for (const e of m.entries.filter((x) => x.kind === kind)) view.append(entryCard(e));
+  }
+  view.append(h("h2", {}, "Skills"));
+  const gname = h("input", { placeholder: "Group, e.g. Backend" });
+  const gitems = h("input", { placeholder: "Skills, comma separated", style: "flex:1;min-width:200px" });
+  view.append(h("div", { class: "card" }, h("div", { class: "row" }, gname, gitems,
+    h("button", { class: "primary", onclick: act(() => api("PUT", "/api/cv/skills", { group: gname.value, items: gitems.value.split(",") })) }, "Add group"))));
+  for (const g of m.skills) view.append(skillGroupCard(g));
+}
+
+
+/** Pick items from a list and put them in order. Used where typing would cause silent mismatches. */
+function orderedPicker(label, options, selected) {
+  const known = new Set(options.map((o) => o[0]));
+  const state = selected.filter((v) => known.has(v));
+  const dropped = selected.filter((v) => !known.has(v));
+  const text = (v) => (options.find((o) => o[0] === v) || [v, v])[1];
+  const box = h("div", {});
+  const add = h("select", {});
+  const draw = () => {
+    add.replaceChildren(h("option", { value: "" }, "Add one..."), ...options.filter((o) => !state.includes(o[0])).map((o) => h("option", { value: o[0] }, o[1])));
+    box.replaceChildren(
+      ...state.map((v, i) => h("div", { class: "row", style: "margin:2px 0" },
+        h("span", { class: "badge" }, String(i + 1)),
+        h("span", { style: "flex:1" }, text(v)),
+        h("button", { onclick: () => { if (i > 0) { [state[i - 1], state[i]] = [state[i], state[i - 1]]; draw(); } } }, "↑"),
+        h("button", { onclick: () => { if (i < state.length - 1) { [state[i + 1], state[i]] = [state[i], state[i + 1]]; draw(); } } }, "↓"),
+        h("button", { class: "danger", onclick: () => { state.splice(i, 1); draw(); } }, "Remove"))),
+      h("div", { class: "row" }, add));
+  };
+  add.addEventListener("change", () => { if (add.value) { state.push(add.value); draw(); } });
+  draw();
+  return {
+    el: h("div", { class: "field" }, h("label", {}, label), box,
+      dropped.length > 0 && h("div", { class: "muted", style: "color:var(--warn)" }, `Not recognised and removed: ${dropped.join(", ")}. Save to keep the cleaned list.`)),
+    get: () => [...state],
+  };
+}
 
 // ---------- settings ----------
 
@@ -223,8 +384,16 @@ async function settingsView() {
   const anySite = h("input", { type: "checkbox" });
   anySite.checked = p.searchAnySite !== false;
 
+  const countries = orderedPicker("Country priority, best first (work for earlier countries is listed higher on a tailored CV)", lists.countries.map((c) => [c, c]), p.countryPriority || []);
+  const employment = orderedPicker("Type of work priority, best first, used after country", lists.employmentTypes.map((t) => [t.value, t.label]), p.employmentPriority || []);
+  const guidance = h("textarea", { placeholder: "e.g. Prefer international client work. Keep it to one page when possible. Always show my projects." });
+  guidance.value = p.cvGuidance || "";
+
   const savePrefs = act(() => api("PUT", "/api/preferences", {
     searchAnySite: anySite.checked,
+    cvGuidance: guidance.value,
+    countryPriority: countries.get(),
+    employmentPriority: employment.get(),
     roles: roles.get(), seniority: level.get(), locations: where.get(), industries: industries.get(),
     exclusions: exclusions.get().split(",").map((x) => x.trim()).filter(Boolean),
     remotePolicy: remote.value,
@@ -240,6 +409,8 @@ async function settingsView() {
       industries.el, exclusions.el,
       h("div", { class: "field" }, h("label", {}, anySite, " Search any site: Google and company career pages, as well as the sites listed below. Untick to search only the listed sites.")),
       h("div", { class: "row" }, floor.el, target.el, ceiling.el, currency.el),
+      countries.el, employment.el,
+      h("div", { class: "field" }, h("label", {}, "How my CVs should be built (the agent follows this when tailoring)"), guidance),
       h("h2", {}, "Daily limits"),
       h("div", { class: "muted" }, `Today: ${budget.addedToday} of ${budget.limit} jobs added.`),
       h("div", { class: "row" }, discovery.el, applications.el),
@@ -282,12 +453,16 @@ async function settingsView() {
 
 // ---------- routing ----------
 
+let lists = null;
+
 async function render() {
   const [, page, arg] = location.hash.split("/");
   let queueCount = 0;
   try {
+    lists ||= await api("GET", "/api/lists");
     if (page === "pipeline") await pipelineView();
     else if (page === "jobs") await jobView(Number(arg));
+    else if (page === "cv") await cvView();
     else if (page === "facts") await factsView();
     else if (page === "settings") await settingsView();
     else queueCount = await queueView();
@@ -298,6 +473,7 @@ async function render() {
   nav.replaceChildren(
     h("a", { href: "#/", class: !page ? "active" : "" }, `Needs you${queueCount ? ` (${queueCount})` : ""}`),
     h("a", { href: "#/pipeline", class: page === "pipeline" || page === "jobs" ? "active" : "" }, "Pipeline"),
+    h("a", { href: "#/cv", class: page === "cv" ? "active" : "" }, "CV"),
     h("a", { href: "#/facts", class: page === "facts" ? "active" : "" }, "Facts"),
     h("a", { href: "#/settings", class: page === "settings" ? "active" : "" }, "Settings"));
 }

@@ -3,14 +3,18 @@
   "version": "0.0.1",
   "type": "module",
   "license": "MIT",
-  "bin": { "jobhunt-dashboard": "dist/main.js" },
+  "bin": {
+    "jobhunt-dashboard": "dist/main.js",
+    "jobhunt-import-cv": "dist/import-cv.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "test": "vitest run"
   },
   "dependencies": {
-    "@jobhunt/core": "*"
+    "@jobhunt/core": "*",
+    "@jobhunt/render": "*"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

@@ -11,11 +11,13 @@ import { createMcpServer } from "../src/server.js";
 
 let db: DB;
 let client: Client;
+let dataDir: string;
 
 beforeEach(async () => {
   db = openDb(":memory:");
+  dataDir = mkdtempSync(join(tmpdir(), "jobhunt-data-"));
   const [a, b] = InMemoryTransport.createLinkedPair();
-  await createMcpServer(db).connect(a);
+  await createMcpServer(db, { dataDir }).connect(a);
   client = new Client({ name: "test", version: "0" });
   await client.connect(b);
 });

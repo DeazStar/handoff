@@ -15,6 +15,10 @@ export interface Fact {
   sourceNote?: string;
   /** Set when the fact may only be used for one job; absent for general facts. */
   jobId?: number;
+  /** The CV entry (job, project) this fact is a bullet of. */
+  entryId?: number;
+  /** For skills: the group they are listed under on the CV. */
+  skillGroup?: string;
 }
 
 export interface NewFact {
@@ -24,6 +28,8 @@ export interface NewFact {
   tags?: string[];
   sourceNote?: string;
   jobId?: number;
+  entryId?: number;
+  skillGroup?: string;
 }
 
 const toFact = (r: any): Fact => ({
@@ -34,6 +40,8 @@ const toFact = (r: any): Fact => ({
   tags: JSON.parse(r.tags),
   sourceNote: r.source_note ?? undefined,
   jobId: r.job_id ?? undefined,
+  entryId: r.entry_id ?? undefined,
+  skillGroup: r.skill_group ?? undefined,
 });
 
 /**
@@ -67,8 +75,8 @@ export function addFact(db: DB, f: NewFact, actor: Actor): number {
   requireHuman(actor, "facts");
   if (!f.text.trim()) throw new Error("A fact needs text");
   const info = db
-    .prepare("INSERT INTO facts (kind, text, date_range, tags, source_note, job_id) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(f.kind, f.text.trim(), f.dateRange ?? null, JSON.stringify(f.tags ?? []), f.sourceNote ?? null, f.jobId ?? null);
+    .prepare("INSERT INTO facts (kind, text, date_range, tags, source_note, job_id, entry_id, skill_group) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(f.kind, f.text.trim(), f.dateRange ?? null, JSON.stringify(f.tags ?? []), f.sourceNote ?? null, f.jobId ?? null, f.entryId ?? null, f.skillGroup ?? null);
   const id = Number(info.lastInsertRowid);
   logEvent(db, actor, "fact_added", f.jobId ?? null, { id, jobOnly: f.jobId !== undefined });
   return id;
@@ -78,8 +86,8 @@ export function updateFact(db: DB, id: number, f: NewFact, actor: Actor): void {
   requireHuman(actor, "facts");
   if (!f.text.trim()) throw new Error("A fact needs text");
   const info = db
-    .prepare("UPDATE facts SET kind = ?, text = ?, date_range = ?, tags = ?, source_note = ?, job_id = ? WHERE id = ?")
-    .run(f.kind, f.text.trim(), f.dateRange ?? null, JSON.stringify(f.tags ?? []), f.sourceNote ?? null, f.jobId ?? null, id);
+    .prepare("UPDATE facts SET kind = ?, text = ?, date_range = ?, tags = ?, source_note = ?, job_id = ?, entry_id = ?, skill_group = ? WHERE id = ?")
+    .run(f.kind, f.text.trim(), f.dateRange ?? null, JSON.stringify(f.tags ?? []), f.sourceNote ?? null, f.jobId ?? null, f.entryId ?? null, f.skillGroup ?? null, id);
   if (info.changes === 0) throw new Error(`Fact ${id} not found`);
   logEvent(db, actor, "fact_updated", null, { id });
 }

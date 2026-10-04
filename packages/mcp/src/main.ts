@@ -12,7 +12,7 @@ const { dataDir, dbPath } = resolveDataPaths();
 mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 const db = openDb(dbPath);
 
-await createMcpServer(db).connect(new StdioServerTransport());
+await createMcpServer(db, { dataDir }).connect(new StdioServerTransport());
 console.error(`jobhunt MCP server ready (database: ${dbPath})`);
 
 process.on("SIGINT", () => process.exit(0));

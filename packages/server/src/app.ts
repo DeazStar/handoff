@@ -1,7 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { FACT_KINDS, TransitionError, createHumanApi, type DB, type JobState } from "@jobhunt/core";
+import { readFileSync, rmSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
+import { COUNTRIES, EMPLOYMENT_TYPES, FACT_KINDS, TransitionError, createHumanApi, orderForCv, type CvPlan, type DB, type JobState } from "@jobhunt/core";
+import { renderCvPdf } from "@jobhunt/render";
 
 const PUBLIC = new URL("../public/", import.meta.url);
 const STATIC: Record<string, [string, string]> = {
@@ -11,6 +14,11 @@ const STATIC: Record<string, [string, string]> = {
 };
 const COOKIE = "jh_token";
 const MAX_BODY = 1_000_000;
+
+/** A non-JSON response, such as a PDF. */
+class Raw {
+  constructor(public type: string, public body: Buffer, public headers: Record<string, string> = {}) {}
+}
 
 class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -95,10 +103,10 @@ const int = (s: string) => {
   return n;
 };
 
-export function createApp(db: DB, opts: { token: string }): Server {
+export function createApp(db: DB, opts: { token: string; dataDir: string }): Server {
   const human = createHumanApi(db);
 
-  type Handler = (m: RegExpMatchArray, body: any, url: URL) => unknown;
+  type Handler = (m: RegExpMatchArray, body: any, url: URL) => unknown | Promise<unknown>;
   const routes: [string, RegExp, Handler][] = [];
   const route = (method: string, path: string, h: Handler) =>
     routes.push([method, new RegExp(`^${path}$`), h]);
@@ -169,6 +177,9 @@ export function createApp(db: DB, opts: { token: string }): Server {
       dailyApplicationLimit: Number(b.dailyApplicationLimit),
       dailyDiscoveryLimit: Number(b.dailyDiscoveryLimit),
       searchAnySite: b.searchAnySite !== false,
+      cvGuidance: optText(b.cvGuidance),
+      countryPriority: strings(b.countryPriority),
+      employmentPriority: strings(b.employmentPriority),
     });
     return { ok: true };
   });
@@ -180,7 +191,82 @@ export function createApp(db: DB, opts: { token: string }): Server {
   });
   route("POST", "/api/sources/(\\d+)/enabled", (m, b) => (human.setSourceEnabled(int(m[1]!), b.enabled === true), { ok: true }));
   route("GET", "/api/budget", () => human.discoveryBudget());
+
+  // ---- CV ----
+  const entryBody = (b: any, kind?: string) => ({
+    kind: (kind ?? b.kind) as "work" | "project" | "education",
+    title: String(b.title ?? ""),
+    organization: optText(b.organization),
+    location: optText(b.location),
+    startDate: optText(b.startDate),
+    endDate: optText(b.endDate),
+    isCurrent: b.isCurrent === true,
+    note: optText(b.note),
+    weight: b.weight,
+    country: optText(b.country),
+    employmentType: optText(b.employmentType) as any,
+  });
+  // The choices the dashboard offers in pick lists. Free text for these caused silent mismatches.
+  route("GET", "/api/lists", () => ({
+    countries: COUNTRIES,
+    employmentTypes: EMPLOYMENT_TYPES.map((value) => ({ value, label: value.replace("_", "-").replace(/^./, (c) => c.toUpperCase()) })),
+  }));
+  route("GET", "/api/cv", () => human.getCvMaterial(null));
+  route("POST", "/api/cv/entries", (_m, b) => ({ id: human.addEntry(entryBody(b)) }));
+  route("PUT", "/api/cv/entries/(\\d+)", (m, b) => (human.updateEntry(int(m[1]!), entryBody(b)), { ok: true }));
+  route("DELETE", "/api/cv/entries/(\\d+)", (m) => (human.deleteEntry(int(m[1]!)), { ok: true }));
+  route("POST", "/api/cv/entries/(\\d+)/move", (m, b) => {
+    if (b.direction !== "up" && b.direction !== "down") throw new HttpError(400, "direction must be up or down");
+    human.moveEntry(int(m[1]!), b.direction);
+    return { ok: true };
+  });
+  route("POST", "/api/cv/entries/(\\d+)/bullets", (m, b) => ({ id: human.addBullet(int(m[1]!), String(b.text ?? "")) }));
+  route("PUT", "/api/cv/bullets/(\\d+)", (m, b) => {
+    const id = int(m[1]!);
+    const fact = human.listFacts().find((f) => f.id === id && f.entryId !== undefined);
+    if (!fact) throw new HttpError(404, "Bullet not found");
+    human.updateFact(id, { ...fact, text: String(b.text ?? "") });
+    return { ok: true };
+  });
+  route("PUT", "/api/cv/skills", (_m, b) => (human.setSkillGroup(String(b.group ?? ""), strings(b.items)), { ok: true }));
+
+  // The whole CV as it stands, for checking the layout. Skips entries that have no bullets yet.
+  route("GET", "/api/cv/preview.pdf", async () => {
+    const m = human.getCvMaterial(null);
+    // The same order any tailored CV must follow: lead entries first, then the user's country and employment priority.
+    const ordered = (kind: string) => orderForCv(db, m.entries.filter((e) => e.kind === kind && e.bullets.length));
+    const plan: CvPlan = {
+      experience: ordered("work").map((e) => ({ entryId: e.id, bullets: e.bullets.map((x) => x.id) })),
+      projects: ordered("project").map((e) => ({ entryId: e.id, bullets: e.bullets.map((x) => x.id) })),
+      education: m.entries.filter((e) => e.kind === "education").map((e) => ({ entryId: e.id })),
+      skills: m.skills.map((g) => ({ group: g.group, factIds: g.skills.map((x) => x.id) })),
+    };
+    const { cv } = human.prepareCv(plan, null);
+    const { pdf, pages } = await renderCvPdf(cv);
+    return new Raw("application/pdf", pdf, { "content-disposition": 'inline; filename="cv-preview.pdf"', "x-pages": String(pages) });
+  });
+
+  // A saved document's file. Only files inside the documents folder can be served.
+  route("GET", "/api/documents/(\\d+)/file", (m) => {
+    const doc = human.getDocument(int(m[1]!));
+    if (!doc || !doc.path.toLowerCase().endsWith(".pdf")) throw new HttpError(404, "No file for this document");
+    const root = resolve(opts.dataDir, "documents") + sep;
+    const full = resolve(opts.dataDir, doc.path);
+    if (!full.startsWith(root)) throw new HttpError(404, "No file for this document");
+    let body: Buffer;
+    try { body = readFileSync(full); } catch { throw new HttpError(404, "The file is missing"); }
+    return new Raw("application/pdf", body, { "content-disposition": `inline; filename="${doc.kind}-v${doc.version}.pdf"` });
+  });
+
   route("GET", "/api/sources/stats", () => human.sourceStats());
+  // Deleting a document removes its record and, if it lies inside the documents folder, its file.
+  route("DELETE", "/api/documents/(\\d+)", (m) => {
+    const path = human.deleteDocument(int(m[1]!));
+    const root = resolve(opts.dataDir, "documents") + sep;
+    const full = resolve(opts.dataDir, path);
+    if (full.startsWith(root)) rmSync(full, { force: true });
+    return { ok: true };
+  });
   route("GET", "/api/documents/(\\d+)", (m) => {
     const d = human.getDocument(int(m[1]!));
     if (!d) throw new HttpError(404, "Document not found");
@@ -234,7 +320,20 @@ export function createApp(db: DB, opts: { token: string }): Server {
     for (const [m, re, h] of routes) {
       if (m !== method) continue;
       const match = url.pathname.match(re);
-      if (match) return send(res, 200, h(match, body, url) ?? null);
+      if (match) {
+        const out = await h(match, body, url);
+        if (out instanceof Raw) {
+          res.writeHead(200, {
+            "content-type": out.type,
+            "cache-control": "no-store",
+            "x-content-type-options": "nosniff",
+            "content-security-policy": "default-src 'none'",
+            ...out.headers,
+          });
+          return res.end(out.body);
+        }
+        return send(res, 200, out ?? null);
+      }
     }
     throw new HttpError(404, "Not found");
   }

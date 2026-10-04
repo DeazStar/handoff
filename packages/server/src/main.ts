@@ -5,7 +5,7 @@ import { loadConfig } from "./config.js";
 
 const config = loadConfig();
 const db = openDb(config.dbPath);
-const server = createApp(db, { token: config.token });
+const server = createApp(db, { token: config.token, dataDir: config.dataDir });
 
 // 127.0.0.1 only: nothing else on the network can reach it.
 server.listen(config.port, "127.0.0.1", () => {

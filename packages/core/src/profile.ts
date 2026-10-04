@@ -1,4 +1,5 @@
 import type { DB } from "./db.js";
+import { requireCountry } from "./countries.js";
 import { logEvent } from "./jobs.js";
 import type { Actor } from "./states.js";
 
@@ -30,7 +31,16 @@ export interface Preferences {
   dailyDiscoveryLimit: number;
   /** True: search Google and any company career page as well as the listed sites. False: only the listed sites. */
   searchAnySite: boolean;
+  /** Free text about how tailored CVs should be built, e.g. "prefer international client work". */
+  cvGuidance?: string;
+  /** Countries, best first. Work from an earlier country is listed before work from a later one. */
+  countryPriority?: string[];
+  /** Employment types (full_time, part_time, contract, freelance), best first. Used after country priority. */
+  employmentPriority?: string[];
 }
+
+export const EMPLOYMENT_TYPES = ["full_time", "part_time", "contract", "freelance"] as const;
+export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
 
 /** Profile, facts and preferences are the user's own truth. The agent reads them, never writes them. */
 export function requireHuman(actor: Actor, what: string): void {
@@ -76,6 +86,22 @@ export function setProfile(db: DB, p: Profile, actor: Actor): void {
   logEvent(db, actor, "profile_updated", null);
 }
 
+/** Trimmed, no blanks, no repeats (ignoring case), order kept. */
+function dedupeList(list: string[]): string[] {
+  const seen = new Set<string>();
+  return list.map((c) => c.trim()).filter((c) => c && !seen.has(c.toLowerCase()) && seen.add(c.toLowerCase()));
+}
+
+/** Countries must come from the country list; typos are refused, not silently ignored. */
+function cleanCountries(list: string[]): string[] {
+  const seen = new Set<string>();
+  return list
+    .map((c) => c.trim())
+    .filter(Boolean)
+    .map(requireCountry)
+    .filter((c) => !seen.has(c) && seen.add(c));
+}
+
 export function getPreferences(db: DB): Preferences | null {
   const r = db.prepare("SELECT * FROM preferences WHERE id = 1").get() as Record<string, any> | undefined;
   if (!r) return null;
@@ -93,6 +119,9 @@ export function getPreferences(db: DB): Preferences | null {
     dailyApplicationLimit: r.daily_application_limit,
     dailyDiscoveryLimit: r.daily_discovery_limit,
     searchAnySite: r.search_any_site === 1,
+    cvGuidance: r.cv_guidance ?? undefined,
+    countryPriority: JSON.parse(r.country_priority ?? "[]"),
+    employmentPriority: JSON.parse(r.employment_priority ?? "[]"),
   };
 }
 
@@ -105,23 +134,27 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
     if (given[i]! < given[i - 1]!) throw new Error("Salary must satisfy floor <= target <= ceiling");
   }
   if (given.length > 0 && !p.currency) throw new Error("A currency is required when salary is set");
+  if ((p.cvGuidance?.length ?? 0) > 1000) throw new Error("CV guidance can be at most 1000 characters");
   for (const [name, n, max] of [
     ["dailyApplicationLimit", p.dailyApplicationLimit, 100],
     ["dailyDiscoveryLimit", p.dailyDiscoveryLimit, 200],
   ] as const) {
     if (!Number.isInteger(n) || n < 0 || n > max) throw new Error(`${name} must be a whole number from 0 to ${max}`);
   }
+  const types = dedupeList(p.employmentPriority ?? []).map((t) => t.toLowerCase());
+  const bad = types.find((t) => !EMPLOYMENT_TYPES.includes(t as EmploymentType));
+  if (bad) throw new Error(`Employment priority can list full_time, part_time, contract and freelance, not "${bad}"`);
   db.prepare(
     `INSERT INTO preferences (id, roles, seniority, locations, remote_policy, industries, exclusions,
-       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit, search_any_site)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit, search_any_site, cv_guidance, country_priority, employment_priority)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        roles = excluded.roles, seniority = excluded.seniority, locations = excluded.locations,
        remote_policy = excluded.remote_policy, industries = excluded.industries,
        exclusions = excluded.exclusions, salary_floor = excluded.salary_floor,
        salary_target = excluded.salary_target, salary_ceiling = excluded.salary_ceiling,
        currency = excluded.currency, daily_application_limit = excluded.daily_application_limit,
-       daily_discovery_limit = excluded.daily_discovery_limit, search_any_site = excluded.search_any_site,
+       daily_discovery_limit = excluded.daily_discovery_limit, search_any_site = excluded.search_any_site, cv_guidance = excluded.cv_guidance, country_priority = excluded.country_priority, employment_priority = excluded.employment_priority,
        updated_at = datetime('now')`,
   ).run(
     JSON.stringify(p.roles),
@@ -137,6 +170,9 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
     p.dailyApplicationLimit,
     p.dailyDiscoveryLimit,
     p.searchAnySite === false ? 0 : 1,
+    p.cvGuidance?.trim() || null,
+    JSON.stringify(cleanCountries(p.countryPriority ?? [])),
+    JSON.stringify(types),
   );
   logEvent(db, actor, "preferences_updated", null);
 }

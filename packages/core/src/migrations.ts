@@ -302,4 +302,58 @@ FROM sources s LEFT JOIN jobs j ON j.source_id = s.id
 GROUP BY s.id;
 `,
   },
+  {
+    id: 9,
+    name: "cv_entries",
+    // Jobs, education and projects as structured entries. Bullets are facts that point at an entry.
+    // Skill facts carry their group. A CV document keeps the plan it was built from.
+    sql: `
+CREATE TABLE cv_entries (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('work','education','project')),
+  title TEXT NOT NULL,
+  organization TEXT,
+  location TEXT,
+  start_date TEXT,
+  end_date TEXT,
+  is_current INTEGER NOT NULL DEFAULT 0,
+  note TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+ALTER TABLE facts ADD COLUMN entry_id INTEGER REFERENCES cv_entries(id);
+ALTER TABLE facts ADD COLUMN skill_group TEXT;
+ALTER TABLE documents ADD COLUMN plan TEXT;
+CREATE INDEX idx_facts_entry ON facts(entry_id);
+`,
+  },
+  {
+    id: 10,
+    name: "entry_weight_and_cv_guidance",
+    // weight: how much a tailored CV must respect an entry. lead: always included and listed before
+    // the others of its kind. always: always included. normal: the agent decides.
+    sql: `
+ALTER TABLE cv_entries ADD COLUMN weight TEXT NOT NULL DEFAULT 'normal' CHECK (weight IN ('normal','always','lead'));
+ALTER TABLE preferences ADD COLUMN cv_guidance TEXT;
+`,
+  },
+  {
+    id: 11,
+    name: "country_priority",
+    // country: where an entry's work was for. country_priority: the user's ranking of countries, best first.
+    sql: `
+ALTER TABLE cv_entries ADD COLUMN country TEXT;
+ALTER TABLE preferences ADD COLUMN country_priority TEXT NOT NULL DEFAULT '[]';
+`,
+  },
+  {
+    id: 12,
+    name: "employment_type",
+    // employment_type: how the work was done (full_time, part_time, contract, freelance). employment_priority:
+    // the user's ranking of those types, best first, used after country priority.
+    sql: `
+ALTER TABLE cv_entries ADD COLUMN employment_type TEXT CHECK (employment_type IN ('full_time','part_time','contract','freelance'));
+ALTER TABLE preferences ADD COLUMN employment_priority TEXT NOT NULL DEFAULT '[]';
+`,
+  },
 ];

@@ -9,7 +9,15 @@ export {
   type Profile, type Preferences,
 } from "./profile.js";
 export { addFact, updateFact, deleteFact, makeFactGeneral, listFacts, getFacts, FACT_KINDS, type Fact, type NewFact, type FactKind } from "./facts.js";
-export { saveDocument, getDocument, listDocuments, checkProvenance, numberTokens, ProvenanceError, type Block, type NewDocument, type SavedDocument } from "./documents.js";
+export { saveDocument, deleteDocument, getDocument, listDocuments, checkProvenance, numberTokens, ProvenanceError, type Block, type NewDocument, type SavedDocument } from "./documents.js";
 export { listJobs, getJob, listActionsDetailed, sourceStats, type JobRow, type JobDetail, type ActionDetail } from "./queries.js";
 export { resolveDataPaths } from "./paths.js";
 export { upsertCompany, upsertSource, recordVerification, setMatch, setRoute, checkCandidate, logSkippedCandidate, SKIP_REASONS, BudgetError, addCandidateJobWithinBudget, listSources, setSourceEnabled, discoveryBudget, type Verification, type SourceRow } from "./agentOps.js";
+export {
+  ENTRY_KINDS, ENTRY_WEIGHTS, EMPLOYMENT_TYPES, listEntries, getEntry, addEntry, updateEntry, moveEntry, deleteEntry, addBullet, setSkillGroup,
+  getCvMaterial, importCv,
+  type EntryKind, type EntryWeight, type EmploymentType, type EntryInput, type CvEntry, type CvMaterial, type CvImport,
+} from "./cv.js";
+export { prepareCv, orderForCv, type CvPlan, type ResolvedCv, type BulletRef } from "./cvPlan.js";
+export { nextDocumentVersion } from "./documents.js";
+export { COUNTRIES, canonicalCountry, requireCountry, type Country } from "./countries.js";

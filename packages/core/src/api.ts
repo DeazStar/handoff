@@ -1,7 +1,9 @@
 import { addCandidateJobWithinBudget, checkCandidate, logSkippedCandidate, type SkipReason, discoveryBudget, listSources, recordVerification, setMatch, setRoute, setSourceEnabled, upsertCompany, upsertSource, type Verification } from "./agentOps.js";
 import { confirmGap, listOpenActions, queueAction, reportGap, resolveAction, type ActionKind, type GapReport } from "./actionQueue.js";
 import type { DB } from "./db.js";
-import { getDocument, listDocuments, saveDocument, type NewDocument } from "./documents.js";
+import { deleteDocument, getDocument, listDocuments, nextDocumentVersion, saveDocument, type NewDocument } from "./documents.js";
+import { addBullet, addEntry, deleteEntry, getCvMaterial, importCv, listEntries, moveEntry, setSkillGroup, updateEntry, type CvImport, type EntryInput } from "./cv.js";
+import { prepareCv, type CvPlan } from "./cvPlan.js";
 import { addFact, deleteFact, getFacts, listFacts, makeFactGeneral, updateFact, type FactKind, type NewFact } from "./facts.js";
 import { addCandidateJob, logEvent, transitionJob, type NewJob } from "./jobs.js";
 import { getPreferences, getProfile, setPreferences, setProfile, type Preferences, type Profile } from "./profile.js";
@@ -33,6 +35,9 @@ export function createAgentApi(db: DB) {
     saveDocument: (doc: NewDocument) => saveDocument(db, doc, "agent"),
     getDocument: (id: number) => getDocument(db, id),
     listDocuments: (jobId: number | null) => listDocuments(db, jobId),
+    nextDocumentVersion: (jobId: number | null, kind: NewDocument["kind"]) => nextDocumentVersion(db, jobId, kind),
+    getCvMaterial: (forJob: number | null) => getCvMaterial(db, forJob),
+    prepareCv: (plan: CvPlan, jobId: number | null) => prepareCv(db, plan, jobId),
     listJobs: (state?: JobState) => listJobs(db, { state }),
     getJob: (id: number) => getJob(db, id),
     upsertCompany: (c: Parameters<typeof upsertCompany>[1]) => upsertCompany(db, c, "agent"),
@@ -68,7 +73,18 @@ export function createHumanApi(db: DB) {
     confirmGap: (actionId: number, fact: Omit<NewFact, "jobId">, scope: "job" | "general") =>
       confirmGap(db, actionId, fact, scope, "human"),
     getDocument: (id: number) => getDocument(db, id),
+    deleteDocument: (id: number) => deleteDocument(db, id, "human"),
     listDocuments: (jobId: number | null) => listDocuments(db, jobId),
+    listEntries: () => listEntries(db),
+    addEntry: (e: EntryInput) => addEntry(db, e, "human"),
+    updateEntry: (id: number, e: EntryInput) => updateEntry(db, id, e, "human"),
+    moveEntry: (id: number, direction: "up" | "down") => moveEntry(db, id, direction, "human"),
+    deleteEntry: (id: number) => deleteEntry(db, id, "human"),
+    addBullet: (entryId: number, text: string) => addBullet(db, entryId, text, "human"),
+    setSkillGroup: (group: string, items: string[]) => setSkillGroup(db, group, items, "human"),
+    importCv: (data: CvImport) => importCv(db, data, "human"),
+    getCvMaterial: (forJob: number | null) => getCvMaterial(db, forJob),
+    prepareCv: (plan: CvPlan, jobId: number | null) => prepareCv(db, plan, jobId),
     getProfile: () => getProfile(db),
     getPreferences: () => getPreferences(db),
     listJobs: (state?: JobState) => listJobs(db, { state }),

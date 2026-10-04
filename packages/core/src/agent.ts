@@ -9,3 +9,5 @@ export { FACT_KINDS, type FactKind } from "./facts.js";
 export { ACTION_KINDS, type ActionKind } from "./actionQueue.js";
 export type { Block } from "./documents.js";
 export { SKIP_REASONS, type SkipReason } from "./agentOps.js";
+export type { CvPlan, ResolvedCv, BulletRef } from "./cvPlan.js";
+export type { CvMaterial, CvEntry } from "./cv.js";

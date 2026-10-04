@@ -13,7 +13,8 @@
   "dependencies": {
     "@jobhunt/core": "*",
     "@modelcontextprotocol/sdk": "^1.31.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "@jobhunt/render": "*"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

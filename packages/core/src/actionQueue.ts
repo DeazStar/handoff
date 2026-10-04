@@ -60,6 +60,16 @@ export interface GapReport {
 
 /** A job asks for something none of the user's facts support. The agent reports it and never fills it in. */
 export function reportGap(db: DB, jobId: number, gap: GapReport, actor: Actor = "agent"): number {
+  // The same requirement reported again (for example by a second tailoring run) refreshes the open
+  // card instead of adding a duplicate.
+  const wanted = gap.requirement.trim().toLowerCase();
+  const open = db.prepare("SELECT id, payload FROM action_queue WHERE kind = 'gap' AND status = 'open' AND job_id = ?").all(jobId) as { id: number; payload: string }[];
+  const same = open.find((r) => String(JSON.parse(r.payload).requirement ?? "").trim().toLowerCase() === wanted);
+  if (same) {
+    db.prepare("UPDATE action_queue SET payload = ? WHERE id = ?").run(JSON.stringify(gap), same.id);
+    logEvent(db, actor, "gap_refreshed", jobId, { id: same.id });
+    return same.id;
+  }
   return queueAction(db, "gap", jobId, gap, actor);
 }
 

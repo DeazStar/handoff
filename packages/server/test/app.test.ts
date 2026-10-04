@@ -1,4 +1,7 @@
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAgentApi, openDb, type DB } from "@jobhunt/core";
@@ -9,10 +12,12 @@ let db: DB;
 let server: ReturnType<typeof createApp>;
 let base: string;
 let port: number;
+let dataDir: string;
 
 beforeEach(async () => {
   db = openDb(":memory:");
-  server = createApp(db, { token: TOKEN });
+  dataDir = mkdtempSync(join(tmpdir(), "jobhunt-srv-"));
+  server = createApp(db, { token: TOKEN, dataDir });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   port = (server.address() as AddressInfo).port;
   base = `http://127.0.0.1:${port}`;
@@ -157,5 +162,150 @@ describe("settings api", () => {
     expect(res.status).toBe(200);
     expect(await (await get("/api/profile")).json()).toMatchObject({ fullName: "Ada", links: ["https://x.dev"] });
     expect((await fetch(base + "/api/profile", { method: "PUT", headers: json, body: JSON.stringify({ fullName: " " }) })).status).toBe(400);
+  });
+});
+
+describe("cv api", () => {
+  const put = (path: string, body: unknown) => fetch(base + path, { method: "PUT", headers: json, body: JSON.stringify(body) });
+  const del = (path: string) => fetch(base + path, { method: "DELETE", headers: json, body: "{}" });
+
+  it("adds, edits, orders and deletes entries and their bullets", async () => {
+    const a = (await (await post("/api/cv/entries", { kind: "work", title: "Backend Engineer", organization: "Acme", startDate: "2022-03", endDate: "2024-01" })).json()).id;
+    const b = (await (await post("/api/cv/entries", { kind: "work", title: "Engineer", organization: "Beta", startDate: "2020", isCurrent: true })).json()).id;
+    expect((await post("/api/cv/entries", { kind: "work", title: "x", startDate: "March" })).status).toBe(400);
+
+    const bullet = (await (await post(`/api/cv/entries/${a}/bullets`, { text: "Built an API serving 50000 users" })).json()).id;
+    expect((await put(`/api/cv/bullets/${bullet}`, { text: "Built an API serving 60000 users" })).status).toBe(200);
+    expect((await post(`/api/cv/entries/${b}/move`, { direction: "up" })).status).toBe(200);
+    expect((await post(`/api/cv/entries/${b}/move`, { direction: "sideways" })).status).toBe(400);
+    expect((await put("/api/cv/skills", { group: "Backend", items: ["Node.js", "Rust"] })).status).toBe(200);
+
+    const cv = await (await get("/api/cv")).json();
+    expect(cv.entries.map((e: any) => e.id)).toEqual([b, a]);
+    expect(cv.entries[1].bullets).toEqual([{ id: bullet, text: "Built an API serving 60000 users" }]);
+    expect(cv.entries[0]).toMatchObject({ isCurrent: true });
+    expect(cv.skills[0].skills.map((s: any) => s.text)).toEqual(["Node.js", "Rust"]);
+
+    expect((await put("/api/cv/bullets/9999", { text: "x" })).status).toBe(404);
+    expect((await del(`/api/cv/entries/${a}`)).status).toBe(200);
+    expect((await (await get("/api/cv")).json()).entries).toHaveLength(1);
+  });
+
+  it("renders a preview PDF of the CV as it stands, and says what is missing", async () => {
+    const noProfile = await get("/api/cv/preview.pdf");
+    expect(noProfile.status).toBe(400);
+    expect((await noProfile.json()).error).toMatch(/no name yet/);
+
+    await fetch(base + "/api/profile", { method: "PUT", headers: json, body: JSON.stringify({ fullName: "Ada Lovelace", links: [], languages: [] }) });
+    const e = (await (await post("/api/cv/entries", { kind: "work", title: "Engineer", organization: "Acme" })).json()).id;
+    await post(`/api/cv/entries/${e}/bullets`, { text: "Maintained 12 services" });
+    const pdf = await get("/api/cv/preview.pdf");
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers.get("content-type")).toBe("application/pdf");
+    expect(pdf.headers.get("x-pages")).toBe("1");
+    expect(Buffer.from(await pdf.arrayBuffer()).subarray(0, 5).toString()).toBe("%PDF-");
+  });
+});
+
+describe("document files", () => {
+  const save = (path: string) => {
+    const agent = createAgentApi(db);
+    return agent.saveDocument({ jobId: null, kind: "cv", path, blocks: [{ text: "x", factIds: [], kind: "boilerplate" }] }).id;
+  };
+
+  it("serves a saved PDF from inside the documents folder", async () => {
+    mkdirSync(join(dataDir, "documents"));
+    writeFileSync(join(dataDir, "documents", "cv.pdf"), "%PDF-1.4 test");
+    const res = await get(`/api/documents/${save("documents/cv.pdf")}/file`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/pdf");
+    expect(res.headers.get("content-security-policy")).toBe("default-src 'none'");
+    expect(await res.text()).toBe("%PDF-1.4 test");
+  });
+
+  it("refuses paths that leave the documents folder, other file types, and missing files", async () => {
+    writeFileSync(join(dataDir, "secret.pdf"), "%PDF secret");
+    expect((await get(`/api/documents/${save("../secret.pdf")}/file`)).status).toBe(404);
+    expect((await get(`/api/documents/${save("documents/../secret.pdf")}/file`)).status).toBe(404);
+    expect((await get(`/api/documents/${save(join(dataDir, "secret.pdf"))}/file`)).status).toBe(404);
+    expect((await get(`/api/documents/${save("documents/notes.txt")}/file`)).status).toBe(404);
+    expect((await get(`/api/documents/${save("documents/missing.pdf")}/file`)).status).toBe(404);
+  });
+
+  it("deletes a document's record and its file, but never a file outside the documents folder", async () => {
+    const del = (path: string) => fetch(base + path, { method: "DELETE", headers: json, body: "{}" });
+    mkdirSync(join(dataDir, "documents"), { recursive: true });
+    writeFileSync(join(dataDir, "documents", "gone.pdf"), "%PDF gone");
+    writeFileSync(join(dataDir, "outside.pdf"), "%PDF outside");
+    const inside = save("documents/gone.pdf");
+    const outside = save("../outside.pdf");
+    expect((await del(`/api/documents/${inside}`)).status).toBe(200);
+    expect(existsSync(join(dataDir, "documents", "gone.pdf"))).toBe(false);
+    expect((await get(`/api/documents/${inside}`)).status).toBe(404);
+    expect((await del(`/api/documents/${outside}`)).status).toBe(200);
+    expect(existsSync(join(dataDir, "outside.pdf"))).toBe(true);
+    expect((await del(`/api/documents/${inside}`)).status).toBeGreaterThanOrEqual(400);
+  });
+});
+
+describe("weights and guidance api", () => {
+  it("saves an entry's weight and the CV guidance, and rejects a bad weight", async () => {
+    const id = (await (await post("/api/cv/entries", { kind: "work", title: "Backend Engineer", organization: "Rejuive", weight: "lead" })).json()).id;
+    const cv = await (await get("/api/cv")).json();
+    expect(cv.entries.find((e: any) => e.id === id).weight).toBe("lead");
+    expect((await post("/api/cv/entries", { kind: "work", title: "x", weight: "huge" })).status).toBe(400);
+
+    const prefs = { roles: [], remotePolicy: "any", dailyApplicationLimit: 5, dailyDiscoveryLimit: 5, cvGuidance: "  Prefer international client work.  " };
+    expect((await fetch(base + "/api/preferences", { method: "PUT", headers: json, body: JSON.stringify(prefs) })).status).toBe(200);
+    expect((await (await get("/api/preferences")).json()).cvGuidance).toBe("Prefer international client work.");
+    expect((await fetch(base + "/api/preferences", { method: "PUT", headers: json, body: JSON.stringify({ ...prefs, cvGuidance: "x".repeat(1001) }) })).status).toBe(400);
+  });
+
+  it("puts entries that lead first in the preview, as every CV must", async () => {
+    await fetch(base + "/api/profile", { method: "PUT", headers: json, body: JSON.stringify({ fullName: "Ada", links: [], languages: [] }) });
+    const first = (await (await post("/api/cv/entries", { kind: "work", title: "First by position" })).json()).id;
+    const lead = (await (await post("/api/cv/entries", { kind: "work", title: "Leads the CV", weight: "lead" })).json()).id;
+    await post(`/api/cv/entries/${first}/bullets`, { text: "Did a thing" });
+    await post(`/api/cv/entries/${lead}/bullets`, { text: "Did the main thing" });
+    const res = await get("/api/cv/preview.pdf");
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("country priority api", () => {
+  it("saves the list and each entry's country, and the preview follows the priority", async () => {
+    const put = (path: string, body: unknown) => fetch(base + path, { method: "PUT", headers: json, body: JSON.stringify(body) });
+    await put("/api/profile", { fullName: "Ada", links: [], languages: [] });
+    const eth = (await (await post("/api/cv/entries", { kind: "work", title: "Local job", country: " Ethiopia " })).json()).id;
+    const us = (await (await post("/api/cv/entries", { kind: "work", title: "US job", country: "United States" })).json()).id;
+    await post(`/api/cv/entries/${eth}/bullets`, { text: "Did local work" });
+    await post(`/api/cv/entries/${us}/bullets`, { text: "Did US work" });
+    const prefs = { roles: [], remotePolicy: "any", dailyApplicationLimit: 5, dailyDiscoveryLimit: 5, countryPriority: ["United States", " ", "united states", "Netherlands"] };
+    expect((await put("/api/preferences", prefs)).status).toBe(200);
+    expect((await (await get("/api/preferences")).json()).countryPriority).toEqual(["United States", "Netherlands"]);
+    expect((await (await get("/api/cv")).json()).entries.find((e: any) => e.id === eth).country).toBe("Ethiopia");
+    expect((await get("/api/cv/preview.pdf")).status).toBe(200); // the order it builds would be refused if it broke the rule
+  });
+});
+
+
+describe("pick lists", () => {
+  it("offers the country and work-type choices, and refuses anything off the list", async () => {
+    const lists = await (await get("/api/lists")).json();
+    expect(lists.countries).toContain("United States");
+    expect(lists.countries).toContain("Ethiopia");
+    expect(lists.employmentTypes).toContainEqual({ value: "full_time", label: "Full-time" });
+    expect(lists.employmentTypes.map((t: any) => t.value)).toEqual(["full_time", "part_time", "contract", "freelance"]);
+
+    const entry = await post("/api/cv/entries", { kind: "work", title: "Engineer", country: "Netherland" });
+    expect(entry.status).toBe(400);
+    expect((await entry.json()).error).toMatch(/Did you mean "Netherlands"/);
+    const prefs = { roles: [], remotePolicy: "any", dailyApplicationLimit: 5, dailyDiscoveryLimit: 5, countryPriority: ["United State"] };
+    const res = await fetch(base + "/api/preferences", { method: "PUT", headers: json, body: JSON.stringify(prefs) });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/Did you mean "United States"/);
+    const ok = await fetch(base + "/api/preferences", { method: "PUT", headers: json, body: JSON.stringify({ ...prefs, countryPriority: ["usa"] }) });
+    expect(ok.status).toBe(200);
+    expect((await (await get("/api/preferences")).json()).countryPriority).toEqual(["United States"]);
   });
 });
