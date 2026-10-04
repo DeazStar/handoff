@@ -5,6 +5,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { COUNTRIES, EMPLOYMENT_TYPES, FACT_KINDS, TransitionError, createHumanApi, orderForCv, type CvPlan, type DB, type JobState } from "@jobhunt/core";
 import { renderCvPdf } from "@jobhunt/render";
+import { VaultError, type Vault } from "@jobhunt/vault";
 
 const PUBLIC = new URL("../public/", import.meta.url);
 const STATIC: Record<string, [string, string]> = {
@@ -69,8 +70,13 @@ function send(res: ServerResponse, status: number, body: unknown, type = "applic
 }
 
 /** Maps what core throws to an HTTP status. Crude by design: unknown errors become 500, never 4xx. */
+const VAULT_STATUS: Record<string, number> = {
+  locked: 423, bad_passphrase: 403, throttled: 429, exists: 409, missing: 404, weak_passphrase: 400, bad_name: 400, corrupt: 500,
+};
+
 function statusFor(e: unknown): [number, string] {
   if (e instanceof HttpError) return [e.status, e.message];
+  if (e instanceof VaultError) return [VAULT_STATUS[e.code] ?? 500, e.message];
   if (e instanceof TransitionError) return [409, e.message];
   if (e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError) {
     console.error(e);
@@ -103,7 +109,8 @@ const int = (s: string) => {
   return n;
 };
 
-export function createApp(db: DB, opts: { token: string; dataDir: string }): Server {
+export function createApp(db: DB, opts: { token: string; dataDir: string; vault: Vault }): Server {
+  const vault = opts.vault;
   const human = createHumanApi(db);
 
   type Handler = (m: RegExpMatchArray, body: any, url: URL) => unknown | Promise<unknown>;
@@ -191,6 +198,28 @@ export function createApp(db: DB, opts: { token: string; dataDir: string }): Ser
   });
   route("POST", "/api/sources/(\\d+)/enabled", (m, b) => (human.setSourceEnabled(int(m[1]!), b.enabled === true), { ok: true }));
   route("GET", "/api/budget", () => human.discoveryBudget());
+
+
+  // ---- vault: write-only. Nothing here ever returns a secret value. ----
+  const passphrase = (v: unknown) => (typeof v === "string" ? v : "");
+  route("GET", "/api/vault/status", () => vault.status());
+  route("POST", "/api/vault/create", async (_m, b) => (await vault.create(passphrase(b.passphrase)), vault.status()));
+  route("POST", "/api/vault/unlock", async (_m, b) => (await vault.unlock(passphrase(b.passphrase)), vault.status()));
+  route("POST", "/api/vault/lock", () => (vault.lock(), vault.status()));
+  route("POST", "/api/vault/change-passphrase", async (_m, b) => (await vault.changePassphrase(passphrase(b.old), passphrase(b.next)), vault.status()));
+  route("DELETE", "/api/vault/secrets/([^/]+)", async (m) => (await vault.remove(decodeURIComponent(m[1]!)), vault.status()));
+  // The mail login: a Gmail app password. The address defaults to the profile email.
+  route("PUT", "/api/vault/mail", async (_m, b) => {
+    const password = passphrase(b.password).replace(/\s+/g, "");
+    if (!/^[A-Za-z0-9]{8,64}$/.test(password)) throw new HttpError(400, "That does not look like an app password (letters and digits, usually 16)");
+    const user = optText(b.user) ?? human.getProfile()?.email;
+    if (!user || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user)) throw new HttpError(400, "Set your email address in Settings first");
+    const host = optText(b.host) ?? "smtp.gmail.com";
+    const port = b.port === undefined || b.port === "" ? 465 : Number(b.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new HttpError(400, "Bad port");
+    await vault.set("mail.smtp", JSON.stringify({ host, port, user, password }));
+    return vault.status();
+  });
 
   // ---- CV ----
   const entryBody = (b: any, kind?: string) => ({

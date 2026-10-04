@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@jobhunt/core": "*",
-    "@jobhunt/render": "*"
+    "@jobhunt/render": "*",
+    "@jobhunt/vault": "*"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

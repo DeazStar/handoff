@@ -210,3 +210,115 @@ Never exposed: anything reading or writing vault contents.
 3. Built-in vault vs. integrating an existing password manager.
 4. How much of discovery should be a deterministic script vs. agent-driven (measure in M2).
 5. Should the dashboard also work read-only on a phone (needs a secure local network option)?
+
+## 15. Vault (secrets)
+
+Holds secrets the user types: today the mail app password, later website sign-up credentials. Only the dashboard process can open it. The agent's tools never can.
+
+### Principles
+1. **The agent never sees a secret.** No MCP tool reads, writes or lists secret values, and the MCP package does not import the vault (a test checks this, like the existing import test).
+2. **The key exists only in the dashboard's memory.** It is derived from a passphrase the user types, never stored. The agent's shell access could read a keychain entry or a key file; it cannot read a passphrase that was never written down.
+3. **Write-only from the page.** The browser can set or replace a secret and see its name and "set" state. No endpoint ever returns a value.
+4. **Secrets never reach logs, events, errors or the database.** The `accounts` table keeps site and email only.
+
+### Storage
+- One file in the data folder, `vault.enc`, mode 0600, written atomically (temp file, then rename).
+- Format: a small header (magic, version, scrypt salt and parameters, nonce) followed by AES-256-GCM ciphertext of a JSON object `{ name: { value, updatedAt } }`.
+- Key: scrypt from the passphrase (N=2^17, r=8, p=1, 32-byte output, random 16-byte salt). A wrong passphrase fails GCM authentication and nothing is returned.
+- A fresh random nonce on every write. Changing the passphrase re-encrypts under a new salt.
+- Passphrase: at least 12 characters, with a plain warning that it cannot be recovered. If it is forgotten, the vault is deleted and the secrets re-entered (app passwords are revocable, so nothing else is lost).
+
+### Lifecycle
+- **No vault yet:** the dashboard shows "Create vault" (passphrase twice).
+- **Locked (every server start):** secrets cannot be read or written. Actions that need one say "Unlock the vault first".
+- **Unlocked:** the derived key is held in memory. It is cleared on lock, on server stop, and after 30 minutes idle. The buffer is zeroed when dropped.
+- Unlock attempts are throttled (at most 5 a minute) on top of the cost of scrypt.
+
+### Dashboard API (all behind the existing token, Host and Origin checks)
+| Call | Effect |
+|---|---|
+| `GET /api/vault/status` | `{ exists, unlocked, secrets: [{ name, updatedAt }] }`. Names only. |
+| `POST /api/vault/create` `{ passphrase }` | Creates and unlocks. Refuses if one exists. |
+| `POST /api/vault/unlock` `{ passphrase }` / `POST /api/vault/lock` | Opens or closes. |
+| `PUT /api/vault/secrets/:name` `{ value }` | Sets or replaces. Write-only. |
+| `DELETE /api/vault/secrets/:name` | Removes. |
+| `POST /api/vault/change-passphrase` `{ old, new }` | Re-encrypts. |
+
+### Code layout
+- `packages/vault`: a library with no HTTP and no database: `createVault(dir)` with `create`, `unlock`, `lock`, `isUnlocked`, `names`, `set`, `remove`, `use(name, fn)`.
+- `use(name, fn)` hands the secret to a callback and never returns it, so the mailer can open an SMTP session without the value passing through general code.
+- Only `packages/server` depends on it. The MCP package must not.
+
+### Secret names
+- `mail.smtp`: `{ host, port, user, password }`. Defaults host `smtp.gmail.com`, port 465, user = the profile email.
+- Later: `site:<hostname>` for sign-up credentials, used only by the extension on the user's click.
+
+### Threats considered
+| Threat | Mitigation |
+|---|---|
+| The agent reads the vault | No tool for it, no import of the package, key only in the dashboard's memory |
+| The agent runs shell commands against the file | The file is ciphertext; the key is a passphrase it never sees |
+| A web page calls the dashboard | Existing token, Host and Origin checks; secrets are write-only |
+| Secret leaks through logs or errors | Values are never passed to the logger; SMTP errors are reduced to a short message |
+| Stolen vault file | scrypt cost plus a 12+ character passphrase |
+| User pastes a secret into chat | Documented; the setup screen says never to do this |
+
+## 16. Email route: draft, approve, send
+
+The agent finds a public contact and drafts the email. The user reviews and sends it from the dashboard. Sending is the user's click and nothing the agent can do.
+
+### Data
+- **contacts** (exists): `company_id, name, email, role, source_url`. The agent adds one with a required `source_url`, the public page where the address was found.
+- **emails** (new): `id, job_id, contact_id, subject, body_blocks (JSON), body_text (the user's edited text, if any), attachment_document_id, status (draft | sending | sent | failed | discarded), error, message_id, created_at, sent_at`.
+- The body is written as blocks, like any document, and must pass the same provenance check (every claim cites a fact, every number matches). Greetings and sign-offs are boilerplate.
+- The attachment is a saved CV document for the same job.
+- Plain text only: no HTML, no tracking pixels.
+
+### Agent tools (MCP)
+- `add_contact { companyId, email, name?, role?, sourceUrl }`: validates the address and requires the source URL.
+- `draft_email { jobId, contactId, subject, blocks, attachCvDocumentId }`: runs the provenance check, saves a draft, queues `approve_email`, and moves the job to `awaiting_approval`. At most one open draft per job and contact.
+- There is no tool that sends.
+
+### Dashboard review
+- Shows the recipient and the page it came from, the subject, the body (editable), and the attached CV with an Open PDF link.
+- **Red warning when the recipient's domain does not match the company's domain.** This guards against a hostile page telling the agent to send the CV to an attacker.
+- Buttons: Save edits, Send, Discard. Editing is the user writing, so their text is not provenance-checked.
+- "Send test email to myself" to confirm the credentials before the first real send.
+
+### Send (`POST /api/emails/:id/send`)
+1. Preconditions: status is draft, the vault is unlocked, `mail.smtp` is set, the attachment file exists inside the documents folder, the address is valid.
+2. Daily cap: emails sent today (the user's local day) must be below "Applications per day" in Settings.
+3. Set status `sending` first, so a double click cannot send twice.
+4. Send over SMTP from the profile email, with the CV attached as `<Name>-CV.pdf`, Reply-To set to the profile email, and an optional BCC to self (a setting).
+5. On success: status `sent`, store the message id, write an `applications` record, move the job from `awaiting_approval` to `applied` as the human, and log the event. On failure: status `failed` with a short error and no secret, and a Retry button.
+
+### Safety rules
+- The agent cannot send, cannot change a draft after the user edits it, and cannot read the vault.
+- One recipient per email, no lists, no CC.
+- Limits on subject and body length and on attachment size.
+- Tests use a JSON transport that sends nothing.
+
+### Build order
+1. `packages/vault` with tests (wrong passphrase, tampering, atomic write, idle lock, no secret in errors).
+2. Dashboard vault endpoints and an Unlock/Create box.
+3. Mail credentials form and "Send test email to myself".
+4. `emails` table, contact and draft tools, provenance check on drafts.
+5. Review and Send in the dashboard, with the daily cap.
+6. A `/email` command that finds a contact and drafts for jobs that apply by email.
+
+### Contact verification (before any draft)
+The agent's `add_contact` is refused unless all of these hold. The refusal tells it to search again.
+1. The address is well formed, and its domain has mail records (MX, or A as a fallback).
+2. **The address appears on the cited source page.** The server fetches `source_url` itself (https only, 10 second timeout, 2 MB cap, up to 3 redirects, and every hop is checked so it cannot reach private or local addresses), and looks for the address in the text and in `mailto:` links. A guessed address will not be there.
+3. The address is not marked bounced.
+- No SMTP probing: it is unreliable, blocked on most home networks, and looks like address harvesting.
+- If a page builds its text with JavaScript, the fetch can miss a real address. The user can then add the contact by hand in the dashboard, which skips check 2 but keeps check 1.
+- After a send, a bounce arrives in the user's inbox. The user marks the contact bounced, and the agent is told never to reuse it.
+
+### Decisions
+- BCC the user on every email (a setting, on by default).
+- Default subject: `Application: <role>, <profile name>`, editable on each draft.
+- Vault passphrase: at least 12 characters.
+
+### Open questions
+1. Gmail OAuth later, instead of app passwords?

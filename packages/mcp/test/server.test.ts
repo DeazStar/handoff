@@ -180,6 +180,22 @@ describe("handing work to the user", () => {
   });
 });
 
+describe("the agent cannot reach the vault", () => {
+  it("does not depend on, import or mention the vault", () => {
+    const pkg = JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"));
+    expect(Object.keys({ ...pkg.dependencies, ...pkg.devDependencies })).not.toContain("@jobhunt/vault");
+    const dir = fileURLToPath(new URL("../src/", import.meta.url));
+    for (const f of readdirSync(dir).filter((n) => n.endsWith(".ts"))) {
+      expect(readFileSync(join(dir, f), "utf8"), f).not.toMatch(/jobhunt\/vault|vault\.enc|createVault/);
+    }
+  });
+
+  it("offers no tool that touches secrets or sends mail", async () => {
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    expect(names.filter((n) => /vault|secret|password|smtp|send/i.test(n))).toEqual([]);
+  });
+});
+
 describe("boundaries in the source", () => {
   it("imports the core only through the agent entry point", () => {
     const dir = fileURLToPath(new URL("../src/", import.meta.url));

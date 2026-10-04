@@ -337,6 +337,69 @@ function orderedPicker(label, options, selected) {
   };
 }
 
+
+// ---------- vault ----------
+
+const secretInput = (label, hint) => textField(label, "", { type: "password", autocomplete: "off", spellcheck: "false", placeholder: hint || "" });
+
+async function vaultView() {
+  const [st, profile] = await Promise.all([api("GET", "/api/vault/status"), api("GET", "/api/profile")]);
+  view.replaceChildren(
+    h("h1", {}, "Vault"),
+    h("p", { class: "muted" }, "Passwords you type here are encrypted with your passphrase. The agent can never read them, and this page never shows a saved password again."),
+    h("div", { class: "card" }, h("strong", {}, "Never paste a password or passphrase into a chat with Claude. "), "Type it only into this page."));
+
+  if (!st.exists) {
+    const a = secretInput("Choose a passphrase (at least 12 characters)");
+    const b = secretInput("Type it again");
+    view.append(h("h2", {}, "Create your vault"),
+      h("div", { class: "card" }, h("p", { class: "muted" }, "There is no way to recover a forgotten passphrase. If you forget it you delete the vault and enter your passwords again, which costs nothing but a few minutes."),
+        a.el, b.el,
+        h("button", { class: "primary", onclick: act(async () => {
+          if (a.get() !== b.get()) throw new Error("The two passphrases are different");
+          await api("POST", "/api/vault/create", { passphrase: a.get() });
+        }) }, "Create vault")));
+    return;
+  }
+
+  if (!st.unlocked) {
+    const p = secretInput("Passphrase");
+    view.append(h("h2", {}, "Locked"),
+      h("div", { class: "card" }, h("p", { class: "muted" }, "The vault locks every time the dashboard restarts, and after 30 minutes without use."),
+        p.el, h("button", { class: "primary", onclick: act(() => api("POST", "/api/vault/unlock", { passphrase: p.get() })) }, "Unlock")));
+    return;
+  }
+
+  const mail = st.secrets.find((x) => x.name === "mail.smtp");
+  const pw = secretInput("App password", "16 letters, with or without spaces");
+  view.append(
+    h("div", { class: "row" }, h("span", { class: "badge" }, "unlocked"),
+      h("button", { onclick: act(() => api("POST", "/api/vault/lock", {})) }, "Lock now")),
+    h("h2", {}, "Mail"),
+    h("div", { class: "card" },
+      h("p", {}, profile && profile.email ? `Emails are sent from ${profile.email}.` : "Set your email address in Settings (About you) first."),
+      mail ? h("div", { class: "row" }, h("span", { class: "badge" }, "app password saved"), h("span", { class: "muted" }, `updated ${mail.updatedAt.slice(0, 16).replace("T", " ")}`),
+        h("button", { class: "danger", onclick: act(() => api("DELETE", "/api/vault/secrets/mail.smtp", {})) }, "Remove"))
+        : h("p", { class: "muted" }, "No mail password saved yet."),
+      h("details", { style: "margin:8px 0" }, h("summary", {}, "How to get a Gmail app password"),
+        h("ol", { class: "muted" },
+          h("li", {}, "Open your Google Account, then Security."),
+          h("li", {}, "Turn on 2-Step Verification if it is off."),
+          h("li", {}, "Open App passwords, name it jobhunt, and copy the 16 characters."),
+          h("li", {}, "Paste them below. You can revoke it in Google at any time."))),
+      pw.el,
+      h("button", { class: "primary", onclick: act(() => api("PUT", "/api/vault/mail", { password: pw.get() })) }, mail ? "Replace app password" : "Save app password")),
+    h("h2", {}, "Passphrase"),
+    h("details", { class: "card" }, h("summary", {}, "Change passphrase"), changePassphraseForm()));
+}
+
+function changePassphraseForm() {
+  const o = secretInput("Current passphrase");
+  const n = secretInput("New passphrase (at least 12 characters)");
+  return h("div", {}, o.el, n.el,
+    h("button", { class: "primary", onclick: act(() => api("POST", "/api/vault/change-passphrase", { old: o.get(), next: n.get() })) }, "Change"));
+}
+
 // ---------- settings ----------
 
 /** A comma-separated list with an "Any" switch. Any is saved as an empty list. */
@@ -464,6 +527,7 @@ async function render() {
     else if (page === "jobs") await jobView(Number(arg));
     else if (page === "cv") await cvView();
     else if (page === "facts") await factsView();
+    else if (page === "vault") await vaultView();
     else if (page === "settings") await settingsView();
     else queueCount = await queueView();
     if (page) queueCount = (await api("GET", "/api/actions")).length;
@@ -475,6 +539,7 @@ async function render() {
     h("a", { href: "#/pipeline", class: page === "pipeline" || page === "jobs" ? "active" : "" }, "Pipeline"),
     h("a", { href: "#/cv", class: page === "cv" ? "active" : "" }, "CV"),
     h("a", { href: "#/facts", class: page === "facts" ? "active" : "" }, "Facts"),
+    h("a", { href: "#/vault", class: page === "vault" ? "active" : "" }, "Vault"),
     h("a", { href: "#/settings", class: page === "settings" ? "active" : "" }, "Settings"));
 }
 

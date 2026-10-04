@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAgentApi, openDb, type DB } from "@jobhunt/core";
+import { createVault } from "@jobhunt/vault";
 import { createApp } from "../src/app.js";
 
 const TOKEN = "test-token";
@@ -17,7 +18,7 @@ let dataDir: string;
 beforeEach(async () => {
   db = openDb(":memory:");
   dataDir = mkdtempSync(join(tmpdir(), "jobhunt-srv-"));
-  server = createApp(db, { token: TOKEN, dataDir });
+  server = createApp(db, { token: TOKEN, dataDir, vault: createVault(dataDir, { logN: 10 }) });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   port = (server.address() as AddressInfo).port;
   base = `http://127.0.0.1:${port}`;
@@ -307,5 +308,58 @@ describe("pick lists", () => {
     const ok = await fetch(base + "/api/preferences", { method: "PUT", headers: json, body: JSON.stringify({ ...prefs, countryPriority: ["usa"] }) });
     expect(ok.status).toBe(200);
     expect((await (await get("/api/preferences")).json()).countryPriority).toEqual(["United States"]);
+  });
+});
+
+
+describe("vault api", () => {
+  const PASS = "correct horse battery";
+  const put = (path: string, body: unknown) => fetch(base + path, { method: "PUT", headers: json, body: JSON.stringify(body) });
+  const del = (path: string) => fetch(base + path, { method: "DELETE", headers: json, body: "{}" });
+  const APP_PASSWORD = "abcdwxyzabcdwxyz";
+
+  it("creates, locks and unlocks, and refuses what it should", async () => {
+    expect(await (await get("/api/vault/status")).json()).toEqual({ exists: false, unlocked: false, secrets: null });
+    expect((await post("/api/vault/create", { passphrase: "short" })).status).toBe(400);
+    expect((await post("/api/vault/create", { passphrase: PASS })).status).toBe(200);
+    expect((await post("/api/vault/create", { passphrase: PASS })).status).toBe(409);
+    expect((await post("/api/vault/lock", {})).status).toBe(200);
+    expect((await put("/api/vault/mail", { password: APP_PASSWORD, user: "me@example.com" })).status).toBe(423);
+    expect((await post("/api/vault/unlock", { passphrase: "wrong passphrase!" })).status).toBe(403);
+    const ok = await post("/api/vault/unlock", { passphrase: PASS });
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).unlocked).toBe(true);
+  });
+
+  it("stores the mail login but never sends a secret back", async () => {
+    await post("/api/vault/create", { passphrase: PASS });
+    expect((await put("/api/vault/mail", { password: "nope!" })).status).toBe(400);
+    expect((await put("/api/vault/mail", { password: APP_PASSWORD })).status).toBe(400); // no profile email yet
+    await fetch(base + "/api/profile", { method: "PUT", headers: json, body: JSON.stringify({ fullName: "Ada", email: "ada@example.com", links: [], languages: [] }) });
+
+    const saved = await put("/api/vault/mail", { password: "abcd wxyz abcd wxyz" }); // Google shows it with spaces
+    expect(saved.status).toBe(200);
+    const body = await saved.text();
+    expect(JSON.parse(body).secrets).toEqual([expect.objectContaining({ name: "mail.smtp" })]);
+    for (const text of [body, await (await get("/api/vault/status")).text()]) {
+      expect(text).not.toContain(APP_PASSWORD);
+      expect(text).not.toContain("wxyz");
+    }
+    expect((await del("/api/vault/secrets/mail.smtp")).status).toBe(200);
+    expect((await del("/api/vault/secrets/mail.smtp")).status).toBe(404);
+  });
+
+  it("changes the passphrase", async () => {
+    await post("/api/vault/create", { passphrase: PASS });
+    expect((await post("/api/vault/change-passphrase", { old: "not it, sorry!", next: "another long passphrase" })).status).toBe(403);
+    expect((await post("/api/vault/change-passphrase", { old: PASS, next: "another long passphrase" })).status).toBe(200);
+    await post("/api/vault/lock", {});
+    expect((await post("/api/vault/unlock", { passphrase: PASS })).status).toBe(403);
+    expect((await post("/api/vault/unlock", { passphrase: "another long passphrase" })).status).toBe(200);
+  });
+
+  it("needs the token like everything else", async () => {
+    expect((await fetch(base + "/api/vault/status")).status).toBe(401);
+    expect((await fetch(base + "/api/vault/unlock", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ passphrase: PASS }) })).status).toBe(401);
   });
 });
