@@ -34,6 +34,12 @@ async function api(method, path, body) {
   return data;
 }
 
+function showNote(text) {
+  const box = h("div", { class: "card" }, text);
+  view.prepend(box);
+  setTimeout(() => box.remove(), 12000);
+}
+
 function showError(e) {
   const box = h("div", { class: "error" }, String(e.message || e));
   view.prepend(box);
@@ -388,7 +394,14 @@ async function vaultView() {
           h("li", {}, "Open App passwords, name it jobhunt, and copy the 16 characters."),
           h("li", {}, "Paste them below. You can revoke it in Google at any time."))),
       pw.el,
-      h("button", { class: "primary", onclick: act(() => api("PUT", "/api/vault/mail", { password: pw.get() })) }, mail ? "Replace app password" : "Save app password")),
+      h("div", { class: "row" },
+        h("button", { class: "primary", onclick: act(() => api("PUT", "/api/vault/mail", { password: pw.get() })) }, mail ? "Replace app password" : "Save app password"),
+        mail && h("button", { onclick: async () => {
+          try {
+            const r = await api("POST", "/api/vault/mail/test", {});
+            showNote(r.dryRun ? `Dry run: a test message to ${r.sentTo} was built but nothing was sent.` : `Test message sent to ${r.sentTo}. Check your inbox (and spam).`);
+          } catch (e) { showError(e); }
+        } }, "Send test email to myself"))),
     h("h2", {}, "Passphrase"),
     h("details", { class: "card" }, h("summary", {}, "Change passphrase"), changePassphraseForm()));
 }

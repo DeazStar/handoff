@@ -6,7 +6,9 @@ import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAgentApi, openDb, type DB } from "@jobhunt/core";
 import { createVault } from "@jobhunt/vault";
+import nodemailer from "nodemailer";
 import { createApp } from "../src/app.js";
+import { createMailer } from "../src/mail.js";
 
 const TOKEN = "test-token";
 let db: DB;
@@ -18,7 +20,8 @@ let dataDir: string;
 beforeEach(async () => {
   db = openDb(":memory:");
   dataDir = mkdtempSync(join(tmpdir(), "jobhunt-srv-"));
-  server = createApp(db, { token: TOKEN, dataDir, vault: createVault(dataDir, { logN: 10 }) });
+  const vault = createVault(dataDir, { logN: 10 });
+  server = createApp(db, { token: TOKEN, dataDir, vault, mailer: createMailer(vault, { dryRun: true, transportFactory: () => nodemailer.createTransport({ jsonTransport: true }) }) });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   port = (server.address() as AddressInfo).port;
   base = `http://127.0.0.1:${port}`;
@@ -361,5 +364,36 @@ describe("vault api", () => {
   it("needs the token like everything else", async () => {
     expect((await fetch(base + "/api/vault/status")).status).toBe(401);
     expect((await fetch(base + "/api/vault/unlock", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ passphrase: PASS }) })).status).toBe(401);
+  });
+});
+
+
+describe("mail test api", () => {
+  const put = (path: string, body: unknown) => fetch(base + path, { method: "PUT", headers: json, body: JSON.stringify(body) });
+  const profile = () => put("/api/profile", { fullName: "Ada Lovelace", email: "ada@example.com", links: [], languages: [] });
+
+  it("explains what is missing, step by step", async () => {
+    expect((await post("/api/vault/mail/test", {})).status).toBe(400); // no profile email
+    await profile();
+    expect((await post("/api/vault/mail/test", {})).status).toBe(423); // no vault yet, so locked
+    await post("/api/vault/create", { passphrase: "correct horse battery" });
+    const res = await post("/api/vault/mail/test", {});
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/Save your mail app password in the Vault first/);
+  });
+
+  it("sends the test message to the user's own address", async () => {
+    await profile();
+    await post("/api/vault/create", { passphrase: "correct horse battery" });
+    await put("/api/vault/mail", { password: "abcd wxyz abcd wxyz" });
+    const res = await post("/api/vault/mail/test", {});
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, sentTo: "ada@example.com", dryRun: true });
+    await post("/api/vault/lock", {});
+    expect((await post("/api/vault/mail/test", {})).status).toBe(423);
+  });
+
+  it("needs the token", async () => {
+    expect((await fetch(base + "/api/vault/mail/test", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
   });
 });

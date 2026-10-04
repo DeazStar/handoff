@@ -184,9 +184,10 @@ describe("the agent cannot reach the vault", () => {
   it("does not depend on, import or mention the vault", () => {
     const pkg = JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"));
     expect(Object.keys({ ...pkg.dependencies, ...pkg.devDependencies })).not.toContain("@jobhunt/vault");
+    expect(Object.keys({ ...pkg.dependencies, ...pkg.devDependencies })).not.toContain("nodemailer");
     const dir = fileURLToPath(new URL("../src/", import.meta.url));
     for (const f of readdirSync(dir).filter((n) => n.endsWith(".ts"))) {
-      expect(readFileSync(join(dir, f), "utf8"), f).not.toMatch(/jobhunt\/vault|vault\.enc|createVault/);
+      expect(readFileSync(join(dir, f), "utf8"), f).not.toMatch(/jobhunt\/vault|vault\.enc|createVault|nodemailer|createMailer/);
     }
   });
 

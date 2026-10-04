@@ -6,6 +6,7 @@ import { join, resolve, sep } from "node:path";
 import { COUNTRIES, EMPLOYMENT_TYPES, FACT_KINDS, TransitionError, createHumanApi, orderForCv, type CvPlan, type DB, type JobState } from "@jobhunt/core";
 import { renderCvPdf } from "@jobhunt/render";
 import { VaultError, type Vault } from "@jobhunt/vault";
+import { MailError, type Mailer } from "./mail.js";
 
 const PUBLIC = new URL("../public/", import.meta.url);
 const STATIC: Record<string, [string, string]> = {
@@ -74,8 +75,11 @@ const VAULT_STATUS: Record<string, number> = {
   locked: 423, bad_passphrase: 403, throttled: 429, exists: 409, missing: 404, weak_passphrase: 400, bad_name: 400, corrupt: 500,
 };
 
+const MAIL_STATUS: Record<string, number> = { not_configured: 409, invalid: 400, auth: 502, unreachable: 502, rejected: 422, failed: 502 };
+
 function statusFor(e: unknown): [number, string] {
   if (e instanceof HttpError) return [e.status, e.message];
+  if (e instanceof MailError) return [MAIL_STATUS[e.code] ?? 502, e.message];
   if (e instanceof VaultError) return [VAULT_STATUS[e.code] ?? 500, e.message];
   if (e instanceof TransitionError) return [409, e.message];
   if (e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError) {
@@ -109,8 +113,9 @@ const int = (s: string) => {
   return n;
 };
 
-export function createApp(db: DB, opts: { token: string; dataDir: string; vault: Vault }): Server {
+export function createApp(db: DB, opts: { token: string; dataDir: string; vault: Vault; mailer: Mailer }): Server {
   const vault = opts.vault;
+  const mailer = opts.mailer;
   const human = createHumanApi(db);
 
   type Handler = (m: RegExpMatchArray, body: any, url: URL) => unknown | Promise<unknown>;
@@ -208,6 +213,18 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
   route("POST", "/api/vault/lock", () => (vault.lock(), vault.status()));
   route("POST", "/api/vault/change-passphrase", async (_m, b) => (await vault.changePassphrase(passphrase(b.old), passphrase(b.next)), vault.status()));
   route("DELETE", "/api/vault/secrets/([^/]+)", async (m) => (await vault.remove(decodeURIComponent(m[1]!)), vault.status()));
+  // Sends one short message to the user's own address, to confirm the login works before any real send.
+  route("POST", "/api/vault/mail/test", async () => {
+    const profile = human.getProfile();
+    if (!profile?.email) throw new HttpError(400, "Set your email address in Settings first");
+    const r = await mailer.send({
+      to: profile.email,
+      fromName: profile.fullName,
+      subject: "jobhunt: test message",
+      text: "This is a test from your jobhunt dashboard. If you can read it, sending works.\n\nNothing was applied to any job.",
+    });
+    return { ok: true, sentTo: profile.email, dryRun: r.dryRun };
+  });
   // The mail login: a Gmail app password. The address defaults to the profile email.
   route("PUT", "/api/vault/mail", async (_m, b) => {
     const password = passphrase(b.password).replace(/\s+/g, "");
