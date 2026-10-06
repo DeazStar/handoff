@@ -145,6 +145,7 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
     const research = companyId ? human.getCompanyResearch(companyId) : null;
     return {
       ...detail,
+      application: human.getApplication(id),
       posting: human.getJobDescription(id),
       people: research?.people ?? [],
       researchedAt: research?.researchedAt,
@@ -201,6 +202,8 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
       bccSelf: b.bccSelf !== false,
       researchMinScore: b.researchMinScore === undefined || b.researchMinScore === "" ? undefined : Number(b.researchMinScore),
       researchScope: b.researchScope,
+      consentDefault: b.consentDefault || undefined,
+      salaryPeriod: b.salaryPeriod || undefined, // anything but month or year is refused by the core
       batchSize: b.batchSize === undefined || b.batchSize === "" ? undefined : Number(b.batchSize),
       employmentPriority: strings(b.employmentPriority),
     });
@@ -249,6 +252,20 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
     return vault.status();
   });
 
+
+
+  // ---- form applications: the agent fills and records, the user checks, submits on the site and marks it ----
+  route("GET", "/api/applications", (_m, _b, url) => human.listApplications(url.searchParams.get("status") ?? undefined));
+  route("GET", "/api/applications/(\\d+)", (m) => {
+    const a = human.getApplication(int(m[1]!));
+    if (!a) throw new HttpError(404, "No application for this job");
+    return a;
+  });
+  route("POST", "/api/applications/(\\d+)/submitted", (m) => (human.markApplicationSubmitted(int(m[1]!)), { ok: true }));
+  route("POST", "/api/applications/(\\d+)/discard", (m) => (human.discardApplication(int(m[1]!)), { ok: true }));
+  route("GET", "/api/standard-answers", () => human.listStandardAnswers());
+  route("PUT", "/api/standard-answers", (_m, b) => (human.setStandardAnswer(String(b.label ?? ""), String(b.answer ?? "")), { ok: true }));
+  route("DELETE", "/api/standard-answers/(\\d+)", (m) => (human.deleteStandardAnswer(int(m[1]!)), { ok: true }));
 
   // ---- email applications: the user reviews, edits and sends. The agent can only draft. ----
   route("GET", "/api/emails", (_m, _b, url) => human.listEmails(url.searchParams.get("status") ?? undefined));

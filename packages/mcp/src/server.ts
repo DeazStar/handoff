@@ -1,5 +1,5 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { renderCvPdf } from "@jobhunt/render";
@@ -14,6 +14,7 @@ import {
   derivePatternContact,
   verifyContact,
   verifyPerson,
+  ANSWER_KINDS,
   type CvPlan,
   type DB,
   type VerifyDeps,
@@ -36,6 +37,7 @@ const INSTRUCTIONS = `You are helping one user find and prepare job applications
 - You decide the content and its order for a CV, never its look. Call get_cv_material, then save_cv with a plan: which entries, in what order, which bullets under each (a fact number to use its text as is, or reworded text citing its facts). The server draws the PDF.
 - When you add a job, save the posting's text (description), who posted it (postedBy) and the apply link: later steps read them from the database and must not need to reopen the page. For jobs that score well, search the company's own pages once for the people who would decide (see list below) and record them; get_company_research tells you whether that has been done.
 - For an email application: find the address on a page of the company's own site, then call add_contact with that page's link. The server checks the address is on that page and that its domain takes mail, and refuses guesses. If it refuses, search again. After a few honest tries, call no_contact_found and stop; the user will apply through the site. Then draft_email. You can draft emails but never send them: the user reviews and sends from the dashboard.
+- For a form application: fill the form yourself in the browser from get_application_material, upload the CV file it names, leave the tab open on the filled form, and record what you entered with prepare_application. Never click the final submit button, never enter a password, never solve a CAPTCHA, and leave demographic, consent and signature questions blank for the user. The user checks the form and submits it.
 - Never invent facts about the user. Use list_facts. If a job asks for something no fact supports, call report_gap.`;
 
 type Result = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -59,12 +61,18 @@ export function createMcpServer(
   db: DB,
   opts: {
     dataDir: string;
+    /**
+     * Where the CV copy for a form is placed. The browser tool only reads files inside the project folder, so by
+     * default this is .jobhunt-uploads in the folder the server was started from (the project folder).
+     */
+    uploadDir?: string;
     /** Checks a contact before it is stored. Tests replace it. */
     verifier?: (input: { email: string; sourceUrl: string }) => Promise<VerifyResult>;
     /** The network lookups behind every check (page fetch, mail records). Tests replace them. */
     deps?: VerifyDeps;
   },
 ): McpServer {
+  const uploadDir = opts.uploadDir ?? process.env.JOBHUNT_UPLOAD_DIR ?? join(process.cwd(), ".jobhunt-uploads");
   const verifier = opts.verifier ?? ((i: { email: string; sourceUrl: string }) => verifyContact(i, opts.deps));
   const agent = createAgentApi(db);
   const server = new McpServer({ name: "jobhunt", version: "0.0.1" }, { instructions: INSTRUCTIONS });
@@ -284,6 +292,57 @@ export function createMcpServer(
       }
     },
   );
+  // ---- form applications ----
+  tool(
+    "get_application_material",
+    "Everything needed to fill an application form for a job that applies by form: the job, the user's profile (name, email, phone, location, links, work authorization, notice period), the salary range and its unit, the user's saved standard answers, and the CV file to upload. Use the profile and standard answers word for word. Call this once per job.",
+    { jobId: id },
+    (a) => {
+      const d = agent.getJob(a.jobId);
+      if (!d) throw new Error(`Job ${a.jobId} not found`);
+      const profile = agent.getProfile();
+      if (!profile) throw new Error("The profile has no name yet (Settings, About you)");
+      const cv = agent.listDocuments(a.jobId).filter((x) => x.kind === "cv").sort((x, y) => y.version - x.version)[0];
+      let upload: { documentId: number; version: number; file: string } | undefined;
+      if (cv) {
+        const source = resolve(opts.dataDir, cv.path);
+        if (!source.startsWith(resolve(opts.dataDir, "documents") + sep) || !existsSync(source)) throw new Error("The CV file is missing. Run the tailoring again");
+        // A copy with a proper name, so the employer sees "Ada-Lovelace-CV.pdf" and not an internal file name.
+        // It sits in the project folder because the browser tool refuses files outside it. Only the latest copy is kept.
+        const dir = join(uploadDir, `job-${a.jobId}`);
+        mkdirSync(dir, { recursive: true });
+        for (const old of readdirSync(dir)) rmSync(join(dir, old), { force: true });
+        const file = join(dir, `${profile.fullName.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "CV"}-CV.pdf`);
+        copyFileSync(source, file);
+        upload = { documentId: cv.id, version: cv.version, file };
+      }
+      const prefs = agent.getPreferences();
+      return {
+        job: { id: d.job.id, title: d.job.title, company: d.job.company, url: d.job.url, applyUrl: d.job.applyUrl, route: d.job.route, state: d.job.state },
+        profile,
+        salary: { floor: prefs?.salaryFloor, target: prefs?.salaryTarget, ceiling: prefs?.salaryCeiling, currency: prefs?.currency, period: prefs?.salaryPeriod },
+        standardAnswers: agent.listStandardAnswers(),
+        cvUpload: upload ?? "No CV yet. Run the tailoring first",
+        application: agent.getApplication(a.jobId)?.status ?? null,
+      };
+    },
+    true,
+  );
+  tool(
+    "prepare_application",
+    "Record a form you filled in the browser and left open for the user. List every answer you entered (the form's own wording for the question) with its kind: profile (from the profile), standard (from the saved standard answers), policy (the salary), free_text (written for this job: it must cite the facts behind any claim, and numbers must match them), or consent (a consent box you ticked, ONLY when the user's command said `consent`; record the box's own wording as the question and the word ticked as the answer). Mark salary, work authorization and similar answers sensitive. List what you left blank and why. A salary must be inside the user's range, and you must say why you chose it. This sends nothing: the user checks the form and submits it.",
+    {
+      jobId: id,
+      formUrl: short(2000),
+      answers: z.array(z.object({ question: short(300), answer: z.string().trim().min(1).max(5000), kind: z.enum(ANSWER_KINDS), sensitive: z.boolean().optional(), factIds: z.array(id).max(20).optional() }).strict()).min(1).max(100),
+      leftBlank: z.array(z.object({ question: short(300), why: short(300) }).strict()).max(100),
+      salaryQuoted: z.number().int().positive().optional(),
+      salaryReason: short(500).optional(),
+      notes: short(1000).optional(),
+    },
+    (a) => agent.prepareApplication(a),
+  );
+
   // ---- saved posting and company research ----
   tool(
     "get_job_description",

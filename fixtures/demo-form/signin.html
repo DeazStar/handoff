@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Demo Corp: Data Engineer (practice sign-in wall)</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:480px;margin:24px auto;padding:0 16px}label{display:block;margin-top:14px;font-weight:600}input{width:100%;padding:8px;box-sizing:border-box;font:inherit}button{font:inherit;padding:10px 18px;margin-top:20px}.hint{color:#666;font-size:14px}</style></head>
+<body>
+  <h1>Data Engineer</h1>
+  <p class="hint">PRACTICE PAGE for the jobhunt project. It sends nothing anywhere.</p>
+  <h2>Create an account to apply</h2>
+  <form onsubmit="event.preventDefault(); document.getElementById('x').textContent = 'An account form was submitted (practice page).'">
+    <label for="e">Email</label><input id="e" type="email">
+    <label for="p">Password</label><input id="p" type="password">
+    <button type="submit">Create account</button>
+  </form>
+  <p id="x" style="color:#b3261e"></p>
+  <p>Already have an account? <a href="#">Sign in</a></p>
+</body>
+</html>

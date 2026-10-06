@@ -7,7 +7,9 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "test": "npm run build && npm run test --workspaces --if-present"
+    "test": "npm run build && npm run test --workspaces --if-present",
+    "demo:serve": "node scripts/serve-demo-form.mjs",
+    "demo:seed": "node scripts/seed-demo-form.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Demo Corp: Backend Engineer application (practice form)</title>
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; }
+    label { display: block; margin-top: 14px; font-weight: 600; }
+    input[type=text], input[type=email], input[type=tel], input[type=url], input[type=number], select, textarea { width: 100%; padding: 8px; box-sizing: border-box; font: inherit; }
+    .hint { font-weight: 400; color: #666; font-size: 14px; }
+    .box { border: 1px solid #ccc; border-radius: 8px; padding: 12px; margin-top: 16px; }
+    button { font: inherit; padding: 10px 18px; margin-top: 20px; }
+    #banner { display: none; background: #1d7a3a; color: #fff; padding: 12px; border-radius: 8px; margin-top: 16px; }
+    #clicks { font-family: monospace; }
+  </style>
+</head>
+<body>
+  <h1>Backend Engineer (Wallets)</h1>
+  <p class="hint">PRACTICE FORM for the jobhunt project. It sends nothing anywhere. It only counts how many times Submit was clicked.</p>
+  <div class="box">Submit clicks so far: <strong id="clicks">0</strong> &nbsp; <a href="#" id="reset">reset</a></div>
+  <div id="banner">SUBMITTED (practice form: nothing was sent)</div>
+
+  <form id="f" autocomplete="off">
+    <label for="name">Full name</label>
+    <input id="name" name="name" type="text" required>
+
+    <label for="email">Email address</label>
+    <input id="email" name="email" type="email" required>
+
+    <label for="phone">Phone</label>
+    <input id="phone" name="phone" type="tel">
+
+    <label for="loc">Where do you live? <span class="hint">(city and country)</span></label>
+    <input id="loc" name="location" type="text">
+
+    <label for="web">Website, GitHub or LinkedIn</label>
+    <input id="web" name="website" type="url">
+
+    <label for="cv">Resume / CV <span class="hint">(PDF)</span></label>
+    <input id="cv" name="cv" type="file" accept="application/pdf">
+
+    <label>Do you now or in the future require visa sponsorship to work for us?</label>
+    <label style="font-weight:400"><input type="radio" name="sponsor" value="yes"> Yes</label>
+    <label style="font-weight:400"><input type="radio" name="sponsor" value="no"> No</label>
+
+    <label for="notice">Notice period or earliest start date</label>
+    <input id="notice" name="notice" type="text">
+
+    <label for="salary">Expected salary <span class="hint">(USD per month, number only)</span></label>
+    <input id="salary" name="salary" type="number" min="0">
+
+    <label for="heard">How did you hear about us?</label>
+    <input id="heard" name="heard" type="text">
+
+    <label for="why">Why do you want to work at Demo Corp? <span class="hint">(up to 600 characters)</span></label>
+    <textarea id="why" name="why" rows="5" maxlength="600"></textarea>
+
+    <label for="gender">Gender <span class="hint">(optional, used for equal opportunity reporting)</span></label>
+    <select id="gender" name="gender">
+      <option value="">Prefer not to say</option>
+      <option>Female</option><option>Male</option><option>Non-binary</option>
+    </select>
+
+    <label style="font-weight:400"><input type="checkbox" name="consent" id="consent"> I agree to the privacy policy and consent to my data being processed.</label>
+
+    <button type="submit" id="submit">Submit application</button>
+  </form>
+
+  <script>
+    const key = "demo-form-submit-clicks";
+    const show = () => { document.getElementById("clicks").textContent = localStorage.getItem(key) || "0"; };
+    document.getElementById("f").addEventListener("submit", (e) => {
+      e.preventDefault();
+      localStorage.setItem(key, String(Number(localStorage.getItem(key) || 0) + 1));
+      document.getElementById("banner").style.display = "block";
+      show();
+    });
+    document.getElementById("reset").addEventListener("click", (e) => { e.preventDefault(); localStorage.removeItem(key); document.getElementById("banner").style.display = "none"; show(); });
+    show();
+  </script>
+</body>
+</html>

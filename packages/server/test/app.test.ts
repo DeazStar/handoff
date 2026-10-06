@@ -644,3 +644,76 @@ describe("saved posting, people and research settings", () => {
     expect(job.contacts[0].verification).toBe("pattern");
   });
 });
+
+describe("form applications api", () => {
+  const put = (path: string, body: unknown) => fetch(base + path, { method: "PUT", headers: json, body: JSON.stringify(body) });
+
+  async function formJob() {
+    const H = "human" as const;
+    const agent = createAgentApi(db);
+    setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", links: [], languages: [] }, H);
+    await put("/api/preferences", { roles: [], remotePolicy: "any", dailyApplicationLimit: 5, dailyDiscoveryLimit: 5, salaryFloor: 900, salaryCeiling: 2000, currency: "USD", salaryPeriod: "month" });
+    const jobId = agent.addCandidateJob({ title: "Backend Engineer", url: "https://a.io/1", canonicalUrl: "https://a.io/1" }).id;
+    const fact = addFact(db, { kind: "experience", text: "Built a payments API serving 50000 users" }, H);
+    agent.recordVerification(jobId, { result: "live" }); agent.setMatch(jobId, 8, "fits"); agent.setRoute(jobId, "form");
+    saveDocument(db, { jobId, kind: "cv", path: "documents/cv.pdf", blocks: [{ text: "Built a payments API serving 50000 users", factIds: [fact] }] }, "agent");
+    agent.transitionJob(jobId, "materials_ready");
+    agent.prepareApplication({
+      jobId, formUrl: "https://a.io/apply",
+      answers: [{ question: "Full name", answer: "Ada Lovelace", kind: "profile" }, { question: "Visa sponsorship?", answer: "Yes", kind: "profile", sensitive: true }],
+      leftBlank: [{ question: "Gender", why: "Optional" }], salaryQuoted: 1400, salaryReason: "The target of the user's range.",
+    });
+    return { agent, jobId };
+  }
+
+  it("lists a prepared form, shows it on the job, and puts it in the user's queue", async () => {
+    const { jobId } = await formJob();
+    const list = await (await get("/api/applications?status=prepared")).json();
+    expect(list).toEqual([expect.objectContaining({ jobId, status: "prepared", jobTitle: "Backend Engineer", route: "form" })]);
+    const a = await (await get(`/api/applications/${jobId}`)).json();
+    expect(a).toMatchObject({ formUrl: "https://a.io/apply", salaryQuoted: 1400, salaryPeriod: "month" });
+    expect(a.answers).toHaveLength(2);
+    expect((await (await get(`/api/jobs/${jobId}`)).json()).application).toMatchObject({ status: "prepared", route: "form" });
+    expect((await (await get("/api/actions")).json()).map((x: any) => x.kind)).toEqual(["confirm_submit"]);
+    expect((await get("/api/applications/999")).status).toBe(404);
+  });
+
+  it("marks it submitted: the job is applied, the queue clears, and it cannot be done twice", async () => {
+    const { jobId } = await formJob();
+    expect((await post(`/api/applications/${jobId}/submitted`, {})).status).toBe(200);
+    expect((await (await get(`/api/jobs/${jobId}`)).json()).job.state).toBe("applied");
+    expect(await (await get("/api/actions")).json()).toEqual([]);
+    expect((await (await get(`/api/applications/${jobId}`)).json()).status).toBe("submitted");
+    expect((await post(`/api/applications/${jobId}/submitted`, {})).status).toBe(400);
+    expect((await post(`/api/applications/${jobId}/discard`, {})).status).toBe(400);
+  });
+
+  it("discarding returns the job to materials ready", async () => {
+    const { jobId } = await formJob();
+    expect((await post(`/api/applications/${jobId}/discard`, {})).status).toBe(200);
+    expect((await (await get(`/api/jobs/${jobId}`)).json()).job.state).toBe("materials_ready");
+    expect(await (await get("/api/actions")).json()).toEqual([]);
+  });
+
+  it("saves standard answers and the salary unit", async () => {
+    expect((await put("/api/standard-answers", { label: "How did you hear about us?", answer: "A job board" })).status).toBe(200);
+    expect((await put("/api/standard-answers", { label: "How did you hear about us?", answer: "The company website" })).status).toBe(200);
+    const list = await (await get("/api/standard-answers")).json();
+    expect(list).toEqual([expect.objectContaining({ label: "How did you hear about us?", answer: "The company website" })]);
+    expect((await put("/api/standard-answers", { label: "", answer: "x" })).status).toBe(400);
+    expect((await fetch(base + `/api/standard-answers/${list[0].id}`, { method: "DELETE", headers: json, body: "{}" })).status).toBe(200);
+    expect(await (await get("/api/standard-answers")).json()).toEqual([]);
+
+    const prefs = { roles: [], remotePolicy: "any", dailyApplicationLimit: 5, dailyDiscoveryLimit: 5 };
+    expect((await put("/api/preferences", { ...prefs, salaryPeriod: "year" })).status).toBe(200);
+    expect((await (await get("/api/preferences")).json()).salaryPeriod).toBe("year");
+    expect((await put("/api/preferences", { ...prefs, salaryPeriod: "week" })).status).toBe(400);
+    expect((await put("/api/preferences", { ...prefs, salaryPeriod: "" })).status).toBe(200);
+    expect((await (await get("/api/preferences")).json()).salaryPeriod).toBeUndefined();
+  });
+
+  it("needs the token", async () => {
+    expect((await fetch(base + "/api/applications")).status).toBe(401);
+    expect((await fetch(base + "/api/applications/1/submitted", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+  });
+});

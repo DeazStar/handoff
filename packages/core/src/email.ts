@@ -288,8 +288,8 @@ export function finishSend(db: DB, id: number, messageId: string, actor: Actor):
     if (!email || email.status !== "sending") throw new Error("This email is not being sent");
     db.prepare("UPDATE emails SET status = 'sent', message_id = ?, sent_at = datetime('now'), error = NULL, updated_at = datetime('now') WHERE id = ?").run(messageId, id);
     db.prepare(
-      `INSERT INTO applications (job_id, route, prepared_at, approved_at, sent_at) VALUES (?, 'email', ?, datetime('now'), datetime('now'))
-       ON CONFLICT(job_id) DO UPDATE SET route = 'email', approved_at = datetime('now'), sent_at = datetime('now')`,
+      `INSERT INTO applications (job_id, route, prepared_at, approved_at, sent_at, status) VALUES (?, 'email', ?, datetime('now'), datetime('now'), 'submitted')
+       ON CONFLICT(job_id) DO UPDATE SET route = 'email', approved_at = datetime('now'), sent_at = datetime('now'), status = 'submitted'`,
     ).run(email.jobId, email.createdAt);
     db.prepare("UPDATE action_queue SET status = 'done', resolved_at = datetime('now') WHERE kind = 'approve_email' AND status = 'open' AND json_extract(payload, '$.emailId') = ?").run(id);
     const job = db.prepare("SELECT state FROM jobs WHERE id = ?").get(email.jobId) as { state: JobState };

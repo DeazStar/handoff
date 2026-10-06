@@ -37,6 +37,10 @@ export interface Preferences {
   countryPriority?: string[];
   /** Send the user a copy of every email they send. Default true. */
   bccSelf?: boolean;
+  /** What the Apply button starts with: tick no consent box, the privacy consent only, or every box needed to submit. */
+  consentDefault?: "none" | "privacy" | "required";
+  /** Whether the salary range is per month or per year. Needed before any salary is quoted on a form. */
+  salaryPeriod?: "month" | "year";
   /** Search a company's own pages for decision makers when a job scores at least this (0 to 10). Default 7. */
   researchMinScore?: number;
   /** all: any job above the score. email_only: only jobs that apply by email. off: never. Default all. */
@@ -131,6 +135,8 @@ export function getPreferences(db: DB): Preferences | null {
     countryPriority: JSON.parse(r.country_priority ?? "[]"),
     employmentPriority: JSON.parse(r.employment_priority ?? "[]"),
     bccSelf: r.bcc_self !== 0,
+    salaryPeriod: r.salary_period ?? undefined,
+    consentDefault: r.consent_default,
     researchMinScore: r.research_min_score,
     researchScope: r.research_scope,
     batchSize: r.batch_size,
@@ -156,6 +162,8 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
   const rs = p.researchMinScore ?? 7;
   if (!Number.isInteger(rs) || rs < 0 || rs > 10) throw new Error("researchMinScore must be a whole number from 0 to 10");
   if (!["all", "email_only", "off"].includes(p.researchScope ?? "all")) throw new Error("researchScope must be all, email_only or off");
+  if (p.salaryPeriod !== undefined && !['month', 'year'].includes(p.salaryPeriod)) throw new Error("salaryPeriod must be month or year");
+  if (p.consentDefault !== undefined && !["none", "privacy", "required"].includes(p.consentDefault)) throw new Error("consentDefault must be none, privacy or required");
   const bs = p.batchSize ?? 10;
   if (!Number.isInteger(bs) || bs < 1 || bs > 20) throw new Error("batchSize must be a whole number from 1 to 20");
   const types = dedupeList(p.employmentPriority ?? []).map((t) => t.toLowerCase());
@@ -163,15 +171,15 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
   if (bad) throw new Error(`Employment priority can list full_time, part_time, contract and freelance, not "${bad}"`);
   db.prepare(
     `INSERT INTO preferences (id, roles, seniority, locations, remote_policy, industries, exclusions,
-       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit, search_any_site, cv_guidance, country_priority, employment_priority, bcc_self, research_min_score, research_scope, batch_size)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit, search_any_site, cv_guidance, country_priority, employment_priority, bcc_self, research_min_score, research_scope, batch_size, salary_period, consent_default)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        roles = excluded.roles, seniority = excluded.seniority, locations = excluded.locations,
        remote_policy = excluded.remote_policy, industries = excluded.industries,
        exclusions = excluded.exclusions, salary_floor = excluded.salary_floor,
        salary_target = excluded.salary_target, salary_ceiling = excluded.salary_ceiling,
        currency = excluded.currency, daily_application_limit = excluded.daily_application_limit,
-       daily_discovery_limit = excluded.daily_discovery_limit, search_any_site = excluded.search_any_site, cv_guidance = excluded.cv_guidance, country_priority = excluded.country_priority, employment_priority = excluded.employment_priority, bcc_self = excluded.bcc_self, research_min_score = excluded.research_min_score, research_scope = excluded.research_scope, batch_size = excluded.batch_size,
+       daily_discovery_limit = excluded.daily_discovery_limit, search_any_site = excluded.search_any_site, cv_guidance = excluded.cv_guidance, country_priority = excluded.country_priority, employment_priority = excluded.employment_priority, bcc_self = excluded.bcc_self, research_min_score = excluded.research_min_score, research_scope = excluded.research_scope, batch_size = excluded.batch_size, salary_period = excluded.salary_period, consent_default = excluded.consent_default,
        updated_at = datetime('now')`,
   ).run(
     JSON.stringify(p.roles),
@@ -194,6 +202,8 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
     p.researchMinScore ?? 7,
     p.researchScope ?? "all",
     p.batchSize ?? 10,
+    p.salaryPeriod ?? null,
+    p.consentDefault ?? "none",
   );
   logEvent(db, actor, "preferences_updated", null);
 }

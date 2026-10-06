@@ -1,3 +1,4 @@
+import { deleteStandardAnswer, discardApplication, getApplication, listApplications, listStandardAnswers, markApplicationSubmitted, prepareApplication, setStandardAnswer, type PrepareInput } from "./application.js";
 import { addPerson, getCompanyResearch, listPeople, markCompanyResearched } from "./research.js";
 import { getJobDescription } from "./queries.js";
 import { saveJobDetails } from "./jobs.js";
@@ -52,6 +53,9 @@ export function createAgentApi(db: DB) {
     getCompanyResearch: (companyId: number) => getCompanyResearch(db, companyId),
     markCompanyResearched: (companyId: number) => markCompanyResearched(db, companyId, "agent"),
     getJobDescription: (jobId: number) => getJobDescription(db, jobId),
+    prepareApplication: (input: PrepareInput) => prepareApplication(db, input, "agent"),
+    getApplication: (jobId: number) => getApplication(db, jobId),
+    listStandardAnswers: () => listStandardAnswers(db),
     saveJobDetails: (jobId: number, d: { description: string; postedBy?: string; applyUrl?: string }) => saveJobDetails(db, jobId, d, "agent"),
     draftEmail: (d: DraftInput) => draftEmail(db, d, "agent"),
     noContactFound: (jobId: number, detail?: string) => noContactFound(db, jobId, detail, "agent"),
@@ -107,6 +111,13 @@ export function createHumanApi(db: DB) {
     getContact: (id: number) => getContact(db, id),
     getCompanyResearch: (companyId: number) => getCompanyResearch(db, companyId),
     getJobDescription: (jobId: number) => getJobDescription(db, jobId),
+    getApplication: (jobId: number) => getApplication(db, jobId),
+    listApplications: (status?: string) => listApplications(db, status),
+    markApplicationSubmitted: (jobId: number) => markApplicationSubmitted(db, jobId, "human"),
+    discardApplication: (jobId: number) => discardApplication(db, jobId, "human"),
+    listStandardAnswers: () => listStandardAnswers(db),
+    setStandardAnswer: (label: string, answer: string) => setStandardAnswer(db, label, answer, "human"),
+    deleteStandardAnswer: (id: number) => deleteStandardAnswer(db, id, "human"),
     markContactBounced: (id: number) => markContactBounced(db, id, "human"),
     getEmail: (id: number) => getEmail(db, id),
     listEmails: (status?: string) => listEmails(db, { status }),

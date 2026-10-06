@@ -15,3 +15,4 @@ export { verifyContact, type VerifyResult } from "./contactVerify.js";
 export type { Contact } from "./email.js";
 export { verifyPerson, derivePatternContact, type PatternResult, type NameCheck, type VerifyDeps } from "./contactVerify.js";
 export type { Person, CompanyResearch } from "./research.js";
+export { ANSWER_KINDS, type AnswerInput, type PrepareInput, type Application, type StandardAnswer } from "./application.js";

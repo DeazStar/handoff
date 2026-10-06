@@ -420,4 +420,35 @@ ALTER TABLE preferences ADD COLUMN research_scope TEXT NOT NULL DEFAULT 'all' CH
 ALTER TABLE preferences ADD COLUMN batch_size INTEGER NOT NULL DEFAULT 10;
 `,
   },
+  {
+    id: 15,
+    name: "form_applications",
+    // A prepared form application: what was typed into the form, what was left for the user, and the salary
+    // quoted. The user submits on the site and then marks it submitted. Standard answers are the user's own
+    // answers to questions every form asks.
+    sql: `
+ALTER TABLE applications ADD COLUMN form_url TEXT;
+ALTER TABLE applications ADD COLUMN left_blank TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE applications ADD COLUMN notes TEXT;
+ALTER TABLE applications ADD COLUMN salary_period TEXT;
+ALTER TABLE applications ADD COLUMN status TEXT NOT NULL DEFAULT 'prepared' CHECK (status IN ('prepared','submitted','discarded'));
+UPDATE applications SET status = 'submitted' WHERE sent_at IS NOT NULL;
+
+CREATE TABLE standard_answers (
+  id INTEGER PRIMARY KEY,
+  label TEXT NOT NULL UNIQUE,
+  answer TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+ALTER TABLE preferences ADD COLUMN salary_period TEXT CHECK (salary_period IN ('month','year'));
+`,
+  },
+  {
+    id: 16,
+    name: "consent_default",
+    // What the Apply button starts with: none, privacy (the privacy consent only) or required (every box needed to submit).
+    // Only the dashboard reads it. Each run still carries its own word in the command the user pastes.
+    sql: `ALTER TABLE preferences ADD COLUMN consent_default TEXT NOT NULL DEFAULT 'none' CHECK (consent_default IN ('none','privacy','required'));`,
+  },
 ];

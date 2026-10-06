@@ -52,6 +52,30 @@ const act = (fn) => async () => {
 
 const label = (s) => s.replaceAll("_", " ");
 
+
+/** One click gets the right command onto the clipboard. A web page cannot start a Claude session itself. */
+function goButton(job) {
+  if (job.state !== "matched" && job.state !== "materials_ready") return null;
+  const next = job.state === "matched"
+    ? "tailor the CV, then draft the email or fill the form"
+    : job.route === "email" ? "draft the email" : job.route === "form" ? "fill the form" : "nothing more to do";
+  const forForm = job.route !== "email";
+  const consent = h("select", { title: "What the agent may tick on the form for this run only. It never ticks optional boxes such as marketing." },
+    [["none", "tick no consent boxes"], ["privacy", "tick the privacy consent only"], ["required", "tick all boxes needed to submit"]].map(([v, t]) => h("option", { value: v }, t)));
+  consent.value = (currentPrefs && currentPrefs.consentDefault) || "none";
+  const btn = h("button", { class: "primary", title: "Copies the command to paste into Claude", onclick: async () => {
+    const word = !forForm || consent.value === "none" ? "" : consent.value === "privacy" ? " consent" : " consent all";
+    const cmd = `/go ${job.id}${word}`;
+    try {
+      await navigator.clipboard.writeText(cmd);
+      showNote(`Copied ${cmd}. Paste it into your Claude session and press Enter. It will ${next}, then stop for your review.`);
+    } catch {
+      showNote(`Copy this and paste it into your Claude session: ${cmd}`);
+    }
+  } }, "Apply");
+  return h("span", { class: "row" }, btn, h("span", { class: "muted" }, `next: ${next}`), forForm && consent);
+}
+
 // ---------- views ----------
 
 async function queueView() {
@@ -67,6 +91,12 @@ function jobLink(a) {
 }
 
 function actionCard(a) {
+  if (a.kind === "confirm_submit" && a.jobId) {
+    return h("div", { class: "card" },
+      h("div", { class: "row" }, h("span", { class: "badge" }, "check and submit"), jobLink(a)),
+      h("div", { class: "muted" }, `${a.payload.answers || 0} answers entered, ${a.payload.leftBlank || 0} left for you`),
+      h("div", { class: "row", style: "margin-top:8px" }, h("a", { href: `#/applications/${a.jobId}` }, "Review the application")));
+  }
   if (a.kind === "approve_email" && a.payload && a.payload.emailId) {
     return h("div", { class: "card" },
       h("div", { class: "row" }, h("span", { class: "badge" }, "approve email"), jobLink(a)),
@@ -116,7 +146,8 @@ async function pipelineView() {
     view.append(h("table", {}, list.map((j) => h("tr", {},
       h("td", {}, h("a", { href: `#/jobs/${j.id}` }, j.title), h("span", { class: "muted" }, `  #${j.id}`), h("div", { class: "muted" }, j.company || "")),
       h("td", { class: "muted" }, j.matchScore !== undefined ? `${j.matchScore}` : ""),
-      h("td", { class: "muted" }, j.source || "")))));
+      h("td", { class: "muted" }, j.source || ""),
+      h("td", {}, goButton(j))))));
   }
 }
 
@@ -130,6 +161,7 @@ async function jobView(id) {
       h("span", { class: "badge" }, label(j.state)), h("span", { class: "badge" }, `route: ${j.route}`),
       j.company && h("span", { class: "muted" }, j.company),
       safeHref(j.url) && h("a", { href: safeHref(j.url), target: "_blank", rel: "noopener noreferrer" }, "open posting")),
+    goButton(j),
     j.matchReason && h("p", {}, `Match ${j.matchScore ?? ""}: ${j.matchReason}`),
     j.stateReason && h("p", { class: "muted" }, `Last change: ${j.stateReason}`),
   ].filter(Boolean));
@@ -145,6 +177,10 @@ async function jobView(id) {
         h("button", { onclick: act(() => api("POST", `/api/jobs/${id}/transition`, { to })) }, label(to)))));
   }
 
+  if (d.application && d.application.status !== "discarded") {
+    view.append(h("h2", {}, "Application"),
+      h("div", { class: "row" }, statusBadge(d.application.status), d.application.route === "form" ? h("a", { href: `#/applications/${id}` }, "review the filled form") : h("span", { class: "muted" }, "sent by email")));
+  }
   const posting = d.posting || {};
   view.append(h("h2", {}, "Posting"));
   if (posting.description) {
@@ -397,6 +433,69 @@ function orderedPicker(label, options, selected) {
 
 
 
+
+// ---------- applications (forms) ----------
+
+const statusBadge = (st) => h("span", { class: `badge${st === "prepared" ? " gap" : ""}` }, st === "prepared" ? "waiting for you" : st);
+
+async function applicationsView() {
+  const list = await api("GET", "/api/applications");
+  const waiting = list.filter((a) => a.status === "prepared");
+  const rest = list.filter((a) => a.status !== "prepared");
+  view.replaceChildren(h("h1", {}, "Applications"),
+    h("p", { class: "muted" }, "Forms the agent filled in and left open for you. Nothing is submitted until you click Submit on the site yourself."));
+  const row = (a) => h("div", { class: "card" }, h("div", { class: "row" }, statusBadge(a.status),
+    h("a", { href: `#/applications/${a.jobId}` }, a.jobTitle), a.company && h("span", { class: "muted" }, a.company), h("span", { class: "muted" }, a.route)));
+  view.append(h("h2", {}, `Waiting for you (${waiting.length})`));
+  if (!waiting.length) view.append(h("div", { class: "empty" }, "No forms waiting."));
+  waiting.forEach((a) => view.append(row(a)));
+  if (rest.length) { view.append(h("h2", {}, "Earlier")); rest.forEach((a) => view.append(row(a))); }
+}
+
+async function applicationView(jobId) {
+  const a = await api("GET", `/api/applications/${jobId}`);
+  const job = await api("GET", `/api/jobs/${jobId}`);
+  const sensitive = a.answers.filter((x) => x.sensitive || x.kind === "policy" || x.kind === "consent");
+  view.replaceChildren(
+    h("p", {}, h("a", { href: "#/applications" }, "← applications")),
+    h("h1", {}, job.job.title),
+    h("div", { class: "row" }, statusBadge(a.status), job.job.company && h("span", { class: "muted" }, job.job.company), h("a", { href: `#/jobs/${jobId}` }, "job page")));
+
+  if (a.status === "prepared") {
+    view.append(h("div", { class: "card" },
+      h("p", {}, "The agent filled this form in its browser tab and left it open. Check it there, fill what was left for you, then click Submit on the site yourself. Come back and press \"I submitted it\"."),
+      safeHref(a.formUrl) && h("p", {}, h("a", { href: safeHref(a.formUrl), target: "_blank", rel: "noopener noreferrer" }, "Open the form in a new tab"), h("span", { class: "muted" }, "  (a new tab will not have the agent's entries; use its own tab)"))));
+  }
+  if (a.salaryQuoted) {
+    view.append(h("div", { class: "card" }, h("strong", {}, `Salary entered: ${a.salaryQuoted} per ${a.salaryPeriod}`), h("div", { class: "muted" }, a.salaryReason || "")));
+  }
+  if (sensitive.length) {
+    view.append(h("h2", {}, "Look at these first"));
+    sensitive.forEach((x) => view.append(h("div", { class: "card" }, h("div", { class: "muted" }, x.question), h("div", {}, x.answer))));
+  }
+  view.append(h("h2", {}, `Everything entered (${a.answers.length})`));
+  view.append(h("table", {}, a.answers.map((x) => h("tr", {},
+    h("td", { class: "muted", style: "width:40%" }, x.question),
+    h("td", { style: "white-space:pre-wrap" }, x.answer),
+    h("td", {}, h("span", { class: "badge" }, x.kind.replace("_", " ")))))));
+  view.append(h("h2", {}, `Left for you (${a.leftBlank.length})`));
+  if (!a.leftBlank.length) view.append(h("div", { class: "muted" }, "Nothing."));
+  a.leftBlank.forEach((x) => view.append(h("div", { class: "card" }, h("div", {}, x.question), h("div", { class: "muted" }, x.why))));
+  if (a.notes) view.append(h("p", { class: "muted" }, a.notes));
+
+  if (a.status === "prepared") {
+    let armed = false;
+    const done = h("button", { class: "primary", onclick: async () => {
+      if (!armed) { armed = true; done.textContent = "Click again: I submitted it on the site"; setTimeout(() => { armed = false; done.textContent = "I submitted it"; }, 6000); return; }
+      try { await api("POST", `/api/applications/${jobId}/submitted`, {}); await render(); showNote("Recorded. It counts toward today's limit."); } catch (e) { armed = false; done.textContent = "I submitted it"; showError(e); }
+    } }, "I submitted it");
+    view.append(h("div", { class: "row", style: "margin-top:12px" }, done,
+      h("button", { class: "danger", onclick: act(async () => { await api("POST", `/api/applications/${jobId}/discard`, {}); location.hash = "#/applications"; }) }, "Discard")));
+  } else if (a.sentAt) {
+    view.append(h("div", { class: "muted" }, `Submitted ${a.sentAt}`));
+  }
+}
+
 // ---------- emails ----------
 
 const emailBadge = (st) => h("span", { class: `badge${st === "failed" ? " gap" : ""}` }, st);
@@ -589,6 +688,8 @@ async function settingsView() {
   const exclusions = textField("Exclude (companies or keywords, comma separated)", (p.exclusions || []).join(", "));
   const remote = h("select", {}, ["any", "remote", "hybrid", "onsite"].map((v) => h("option", { value: v }, v)));
   remote.value = p.remotePolicy;
+  const salaryPeriod = h("select", {}, [["", "Per..."], ["month", "per month"], ["year", "per year"]].map(([v, t]) => h("option", { value: v }, t)));
+  salaryPeriod.value = p.salaryPeriod || "";
   const floor = textField("Salary floor", p.salaryFloor, { type: "number", min: "0" });
   const target = textField("Target", p.salaryTarget, { type: "number", min: "0" });
   const ceiling = textField("Ceiling", p.salaryCeiling, { type: "number", min: "0" });
@@ -599,6 +700,8 @@ async function settingsView() {
   const researchScore = textField("Search the company's own pages for decision makers when a job scores at least", p.researchMinScore ?? 7, { type: "number", min: "0", max: "10" });
   const researchScope = h("select", {}, [["all", "For every good match"], ["email_only", "Only for jobs that apply by email"], ["off", "Never"]].map(([v, t]) => h("option", { value: v }, t)));
   researchScope.value = p.researchScope || "all";
+  const consentDefault = h("select", {}, [["none", "Tick no consent boxes"], ["privacy", "Tick the privacy consent only"], ["required", "Tick all boxes needed to submit"]].map(([v, t]) => h("option", { value: v }, t)));
+  consentDefault.value = p.consentDefault || "none";
   const batch = textField("Jobs one /tailor or /email run may handle", p.batchSize ?? 10, { type: "number", min: "1", max: "20" });
   const bcc = h("input", { type: "checkbox" });
   bcc.checked = p.bccSelf !== false;
@@ -613,6 +716,8 @@ async function settingsView() {
   const savePrefs = act(() => api("PUT", "/api/preferences", {
     searchAnySite: anySite.checked,
     bccSelf: bcc.checked,
+    salaryPeriod: salaryPeriod.value || undefined,
+    consentDefault: consentDefault.value,
     researchMinScore: researchScore.get(), researchScope: researchScope.value, batchSize: batch.get(),
     cvGuidance: guidance.value,
     countryPriority: countries.get(),
@@ -634,7 +739,9 @@ async function settingsView() {
       h("div", { class: "field" }, h("label", {}, bcc, " Send me a copy (BCC) of every email I send")),
       h("h2", {}, "Research and batches"),
       h("div", { class: "row" }, researchScore.el, h("div", { class: "field" }, h("label", {}, "Research"), researchScope), batch.el),
-      h("div", { class: "row" }, floor.el, target.el, ceiling.el, currency.el),
+      h("div", { class: "field" }, h("label", {}, "When I press Apply on a job with a form, the choice starts as"), consentDefault,
+        h("div", { class: "muted" }, "You can change it each time you press Apply. Optional boxes (marketing, talent pool, sharing your data) are never ticked.")),
+      h("div", { class: "row" }, floor.el, target.el, ceiling.el, currency.el, h("div", { class: "field" }, h("label", {}, "Unit"), salaryPeriod)),
       countries.el, employment.el,
       h("div", { class: "field" }, h("label", {}, "How my CVs should be built (the agent follows this when tailoring)"), guidance),
       h("h2", {}, "Daily limits"),
@@ -658,6 +765,20 @@ async function settingsView() {
       safeHref(src.url) && h("a", { href: safeHref(src.url), target: "_blank", rel: "noopener noreferrer" }, "open"),
       h("button", { onclick: act(() => api("POST", `/api/sources/${src.id}/enabled`, { enabled: !src.enabled })) }, src.enabled ? "On: click to turn off" : "Off: click to turn on")))));
 
+
+  // standard answers
+  const sa = await api("GET", "/api/standard-answers");
+  const saLabel = h("input", { placeholder: "question, e.g. How did you hear about us?", style: "flex:1;min-width:200px" });
+  const saAnswer = h("input", { placeholder: "your answer", style: "flex:1;min-width:200px" });
+  const quick = ["How did you hear about us?", "Gender", "Race or ethnicity", "Disability status", "Veteran status", "Are you willing to relocate?", "Are you legally authorized to work in the country of the job?"];
+  view.append(h("h2", {}, "Standard answers"),
+    h("div", { class: "muted" }, "Your own answers to questions forms keep asking, including demographic ones. The agent uses them word for word, and never guesses one for you. A question with no saved answer is left for you."),
+    h("div", { class: "row" }, quick.map((q) => h("button", { onclick: () => { saLabel.value = q; saAnswer.focus(); } }, q))),
+    h("div", { class: "card" }, h("div", { class: "row" }, saLabel, saAnswer,
+      h("button", { class: "primary", onclick: act(() => api("PUT", "/api/standard-answers", { label: saLabel.value, answer: saAnswer.value })) }, "Save"))),
+    ...sa.map((x) => h("div", { class: "card" }, h("div", { class: "row" }, h("strong", { style: "flex:1" }, x.label), h("span", {}, x.answer),
+      h("button", { class: "danger", onclick: act(() => api("DELETE", `/api/standard-answers/${x.id}`, {})) }, "Delete")))));
+
   // profile
   const name2 = textField("Full name", profile?.fullName);
   const email = textField("Email", profile?.email, { type: "email" });
@@ -680,16 +801,19 @@ async function settingsView() {
 // ---------- routing ----------
 
 let lists = null;
+let currentPrefs = null;
 
 async function render() {
   const [, page, arg] = location.hash.split("/");
   let queueCount = 0;
   try {
     lists ||= await api("GET", "/api/lists");
+    currentPrefs = await api("GET", "/api/preferences");
     if (page === "pipeline") await pipelineView();
     else if (page === "jobs") await jobView(Number(arg));
     else if (page === "cv") await cvView();
     else if (page === "facts") await factsView();
+    else if (page === "applications") await (arg ? applicationView(Number(arg)) : applicationsView());
     else if (page === "emails") await (arg ? emailView(Number(arg)) : emailsView());
     else if (page === "vault") await vaultView();
     else if (page === "settings") await settingsView();
@@ -703,6 +827,7 @@ async function render() {
     h("a", { href: "#/pipeline", class: page === "pipeline" || page === "jobs" ? "active" : "" }, "Pipeline"),
     h("a", { href: "#/cv", class: page === "cv" ? "active" : "" }, "CV"),
     h("a", { href: "#/facts", class: page === "facts" ? "active" : "" }, "Facts"),
+    h("a", { href: "#/applications", class: page === "applications" ? "active" : "" }, "Forms"),
     h("a", { href: "#/emails", class: page === "emails" ? "active" : "" }, "Emails"),
     h("a", { href: "#/vault", class: page === "vault" ? "active" : "" }, "Vault"),
     h("a", { href: "#/settings", class: page === "settings" ? "active" : "" }, "Settings"));

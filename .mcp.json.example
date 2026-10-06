@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "jobhunt": {
+      "command": "node",
+      "args": [
+        "packages/mcp/dist/main.js"
+      ],
+      "env": {
+        "JOBHUNT_HOME": "${HOME}/.jobhunt"
+      }
+    },
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@0.0.83",
+        "--browser",
+        "chromium",
+        "--user-data-dir",
+        "${HOME}/.jobhunt/browser-profile"
+      ]
+    }
+  }
+}

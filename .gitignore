@@ -8,3 +8,7 @@ dist/
 
 # Local MCP setup that points at the scratch test database
 .mcp.json
+
+# CV copies placed in the project folder so the browser tool may read them
+.jobhunt-uploads/
+.playwright-mcp/
