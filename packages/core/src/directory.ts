@@ -109,6 +109,8 @@ export interface DirectoryRow {
   verdictReason?: string;
   verdictBy?: "agent" | "user";
   verdictAt?: string;
+  /** When /scout was last handed this company. Set on companies that are still unreviewed, so it tried and gave no verdict. */
+  scoutTriedAt?: string;
 }
 
 export type Verdict = "unreviewed" | "potential" | "discarded";
@@ -158,6 +160,7 @@ export function listDirectory(db: DB, f: DirectoryFilter = {}): DirectoryRow[] {
     verdictReason: r.verdict_reason ?? undefined,
     verdictBy: r.verdict_by ?? undefined,
     verdictAt: r.verdict_at ?? undefined,
+    scoutTriedAt: r.scout_tried_at ?? undefined,
   }));
 }
 
@@ -197,12 +200,25 @@ export function directoryStats(db: DB): DirectoryStats {
 // What /scout works on: a career page we have, or one the code could not read and a browser must.
 const SCOUT_WHERE = `source IS NOT NULL AND verdict = 'unreviewed' AND (careers_status = 'found' OR (careers_status = 'unknown' AND careers_note LIKE 'needs browser%'))`;
 
-/** The next companies for /scout: fully remote first, then in the order they were collected. */
-export function listScoutCompanies(db: DB, limit: number): DirectoryRow[] {
+/**
+ * The next companies for /scout: ones it has not been handed before come first (fully remote first, then in the order collected);
+ * ones it was handed but gave no verdict (a page that would not load) come after them.
+ * With `stamp`, the companies returned are marked as handed out, so the same stubborn few do not take every run's places.
+ */
+export function listScoutCompanies(db: DB, limit: number, stamp = false): DirectoryRow[] {
   const n = Math.min(Math.max(Math.trunc(limit), 1), 50);
-  const ids = (db.prepare(`SELECT id FROM companies WHERE ${SCOUT_WHERE} ORDER BY (remote_hint = 'fully') DESC, id LIMIT ?`).all(n) as { id: number }[]).map((r) => r.id);
+  const ids = (
+    db
+      .prepare(`SELECT id FROM companies WHERE ${SCOUT_WHERE} ORDER BY (scout_tried_at IS NOT NULL), scout_tried_at, (remote_hint = 'fully') DESC, id LIMIT ?`)
+      .all(n) as { id: number }[]
+  ).map((r) => r.id);
   if (!ids.length) return [];
-  return listDirectory(db, { ids }).sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+  const rows = listDirectory(db, { ids }).sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+  if (stamp) {
+    const mark = db.prepare("UPDATE companies SET scout_tried_at = datetime('now') WHERE id = ?");
+    db.transaction(() => ids.forEach((id) => mark.run(id)))();
+  }
+  return rows;
 }
 
 /**
@@ -231,5 +247,6 @@ export function setCompanyVerdict(db: DB, companyId: number, verdict: Verdict, r
     verdict === "unreviewed" ? null : by,
     companyId,
   );
+  if (verdict === "unreviewed") db.prepare("UPDATE companies SET scout_tried_at = NULL WHERE id = ?").run(companyId);
   logEvent(db, actor, "company_verdict", null, { companyId, verdict, reason: why });
 }

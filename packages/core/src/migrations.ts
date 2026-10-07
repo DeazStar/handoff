@@ -497,4 +497,10 @@ ALTER TABLE preferences ADD COLUMN salary_period TEXT CHECK (salary_period IN ('
       CREATE INDEX idx_companies_verdict ON companies(verdict);
     `,
   },
+  {
+    id: 20,
+    name: "scout_tried",
+    // When /scout was last handed this company. A company handed out without getting a verdict goes behind the untried ones.
+    sql: `ALTER TABLE companies ADD COLUMN scout_tried_at TEXT;`,
+  },
 ];

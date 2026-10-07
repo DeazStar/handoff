@@ -48,7 +48,7 @@ export function createAgentApi(db: DB) {
     listJobs: (state?: JobState, sort?: "updated" | "priority") => listJobs(db, { state, sort }),
     getJob: (id: number) => getJob(db, id),
     // Companies from the public lists. The agent judges them; it cannot overrule a verdict the user set.
-    listScoutCompanies: (limit: number) => listScoutCompanies(db, limit),
+    listScoutCompanies: (limit: number) => listScoutCompanies(db, limit, true),
     setCareersPage: (companyId: number, r: { url: string } | { none: true; note?: string }) => setCareersPage(db, companyId, r, "agent"),
     setCompanyVerdict: (companyId: number, verdict: "potential" | "discarded", reason: string) => setCompanyVerdict(db, companyId, verdict, reason, "agent"),
     // Contacts and drafts. The agent can add a verified contact and write a draft; it can never send.

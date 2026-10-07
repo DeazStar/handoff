@@ -174,3 +174,41 @@ describe("scout queue and verdicts", () => {
     expect(throws(() => setCompanyVerdict(db, id("Aaa"), "maybe" as never, "x", "human"))).toMatch(/verdict must be/);
   });
 });
+
+describe("scout does not keep retrying the same company", () => {
+  function queue() {
+    const db = openDb(":memory:");
+    importDirectory(db, [co("Aaa", { remoteHint: "fully" }), co("Bbb"), co("Ccc"), co("Ddd")], "system");
+    for (const r of db.prepare("SELECT id FROM companies").all() as { id: number }[]) setCareersPage(db, r.id, { url: "https://x.io/careers" }, "system");
+    return db;
+  }
+  it("puts a company that was handed out without a verdict behind the fresh ones", () => {
+    const db = queue();
+    expect(listScoutCompanies(db, 2, true).map((c) => c.name)).toEqual(["Aaa", "Bbb"]);
+    // Neither got a verdict. The next run takes the two it has not seen.
+    expect(listScoutCompanies(db, 2, true).map((c) => c.name)).toEqual(["Ccc", "Ddd"]);
+    // Now everyone has been tried once: the least recently tried come first again, fully remote first.
+    expect(listScoutCompanies(db, 4).map((c) => c.name)).toHaveLength(4);
+  });
+  it("does not stamp when only looking", () => {
+    const db = queue();
+    listScoutCompanies(db, 2);
+    expect(listScoutCompanies(db, 2).map((c) => c.name)).toEqual(["Aaa", "Bbb"]);
+  });
+  it("takes a judged company out, and sending it back to review gives it a fresh turn", () => {
+    const db = queue();
+    const agent = createAgentApi(db);
+    const human = createHumanApi(db);
+    const [first] = listScoutCompanies(db, 1, true);
+    agent.setCompanyVerdict(first!.id, "discarded", "6 openings, all on-site in the US, none for backend");
+    expect(listScoutCompanies(db, 10).map((c) => c.name)).not.toContain("Aaa");
+    human.setCompanyVerdict(first!.id, "unreviewed");
+    expect(listDirectory(db).find((c) => c.name === "Aaa")!.scoutTriedAt).toBeUndefined();
+    expect(listScoutCompanies(db, 1)[0]!.name).toBe("Aaa");
+  });
+  it("shows on the company that it was tried", () => {
+    const db = queue();
+    listScoutCompanies(db, 1, true);
+    expect(listDirectory(db).find((c) => c.name === "Aaa")!.scoutTriedAt).toBeTruthy();
+  });
+});

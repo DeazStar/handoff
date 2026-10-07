@@ -583,6 +583,7 @@ async function companiesView() {
         ? h("a", { href: safeHref(c.careersUrl), target: "_blank", rel: "noopener noreferrer", class: "muted" }, (c.careersNote && c.careersNote.startsWith("YC jobs page") ? "jobs page on YC" : "career page"))
         : h("span", { class: "muted" }, c.careersStatus === "none" ? "no career link on its home page" : c.careersNote || "career page not looked at yet")),
     h("div", { class: "muted" }, [c.oneLiner, c.location, c.industry, c.teamSize ? `${c.teamSize} people` : ""].filter(Boolean).join(" · ")),
+    c.verdict === "unreviewed" && c.scoutTriedAt && h("div", { class: "muted" }, "/scout looked at this one and gave no verdict (for example, the page would not load). It will try again after the others."),
     c.verdictReason && h("div", { class: "reason" }, (c.verdictBy === "user" ? (c.verdictReason === "Moved by you" ? c.verdictReason : `You: ${c.verdictReason}`) : `Claude: ${c.verdictReason}`)),
     h("div", { class: "row" },
       c.verdict !== "potential" && move(c, "potential", "Move to potential", "good"),
