@@ -22,10 +22,13 @@ Do the steps below once per job, finishing one before starting the next.
 5. If there is a person but no address, and a real address at the same company is saved or on a page you can cite, call `add_pattern_contact`. Never write an address yourself, and never guess one (careers@, hr@, firstname.lastname@).
 6. If `add_contact` or `add_pattern_contact` refuses, read its message and try something different. After three honest tries without a usable address, call `no_contact_found` with a short note of what you tried, tell the user, and go to the next job. The user will apply through the site.
 
+## Write the cover letter
+If `get_cover_material` says `mode` is `auto`, write the cover letter before the email, as `.claude/commands/cover.md` describes: call `save_cover_letter` for this job and pass `contactId` of the contact you chose (when it has a name). The server refuses `draft_email` without it, and attaches the letter to the email next to the CV. If `mode` is `off`, skip this.
+
 ## Draft the email
 Call `draft_email` with these blocks, one paragraph each:
 1. A greeting, kind `boilerplate`: "Dear <first name>," when you are writing to a named person, otherwise "Dear hiring team,".
-2. Two to four short sentences, each a claim that **cites the facts it rests on**. Say why the user fits this role, using the posting's own requirements and the user's real experience. Name the role. Mention that the CV is attached. Keep every number exactly as in the facts.
+2. Two to four short sentences, each a claim that **cites the facts it rests on**. Say why the user fits this role, using the posting's own requirements and the user's real experience. Name the role. Mention that the CV and the cover letter are attached (just the CV if there is no letter). The letter carries the detail, so the email can stay short. Keep every number exactly as in the facts.
 3. A sign-off, kind `boilerplate`: "Best regards,". Do not write the name, phone or email: they are added.
 
 Use `get_job_description` for what the role asks for and `get_cv_material` with `forJobId` set to the job for the facts and their ids and the `guidance` the user wrote. Plain, specific, no flattery, no buzzwords, under 150 words. Leave the subject out to use the default.

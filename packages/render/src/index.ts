@@ -1,5 +1,5 @@
 import PDFDocument from "pdfkit";
-import type { CvEntry, ResolvedCv } from "@jobhunt/core/agent";
+import type { CvEntry, ResolvedCover, ResolvedCv } from "@jobhunt/core/agent";
 
 const MARGIN = { top: 40, bottom: 40, left: 42, right: 42 };
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -128,6 +128,56 @@ export async function renderCvPdf(cv: ResolvedCv): Promise<{ pdf: Buffer; pages:
       bullets(b);
     }
   }
+
+  const pages = doc.bufferedPageRange().count;
+  doc.end();
+  await ended;
+  return { pdf: Buffer.concat(chunks), pages };
+}
+
+const LONG_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const longDate = (iso: string) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return y && m && d ? `${d} ${LONG_MONTHS[m - 1]} ${y}` : iso;
+};
+
+/**
+ * Draws a cover letter: sender, date, recipient, subject, greeting, the paragraphs, sign-off. One column, standard fonts.
+ * The agent supplies only the paragraphs; everything else comes from the server. Page count is returned so a letter that
+ * runs past one page can be refused.
+ */
+export async function renderCoverPdf(c: ResolvedCover): Promise<{ pdf: Buffer; pages: number }> {
+  const margin = { top: 56, bottom: 56, left: 64, right: 64 };
+  const doc = new PDFDocument({ size: "A4", margins: margin, bufferPages: true, info: { Title: `${c.header.name} - Cover letter`, Author: c.header.name } });
+  const chunks: Buffer[] = [];
+  doc.on("data", (x: Buffer) => chunks.push(x));
+  const ended = new Promise<void>((resolve) => doc.on("end", () => resolve()));
+  const left = margin.left;
+  const width = doc.page.width - margin.left - margin.right;
+  const font = (name: "Helvetica" | "Helvetica-Bold", size: number, color = "#000000") => doc.font(name).fontSize(size).fillColor(color);
+
+  font("Helvetica-Bold", 16).text(drawable(c.header.name), left, margin.top, { width });
+  const contact = [c.header.email, c.header.phone, c.header.location, ...c.header.links.map(shortLink)].filter(Boolean) as string[];
+  if (contact.length) font("Helvetica", 9, "#333333").text(drawable(contact.join("  |  ")), left, doc.y + 2, { width });
+  const rule = doc.y + 6;
+  doc.moveTo(left, rule).lineTo(left + width, rule).lineWidth(0.6).strokeColor("#555555").stroke();
+  doc.y = rule + 16;
+
+  font("Helvetica", 10, "#333333").text(drawable(longDate(c.date)), left, doc.y, { width });
+  doc.y += 10;
+  font("Helvetica", 10.5).text(drawable(c.recipient), left, doc.y, { width });
+  if (c.company) font("Helvetica", 10.5).text(drawable(c.company), left, doc.y, { width });
+  doc.y += 10;
+  font("Helvetica-Bold", 10.5).text(drawable(c.subject), left, doc.y, { width });
+  doc.y += 12;
+  font("Helvetica", 10.5).text(drawable(c.greeting), left, doc.y, { width });
+  doc.y += 8;
+  for (const p of c.paragraphs) {
+    font("Helvetica", 10.5).text(drawable(p), left, doc.y, { width, lineGap: 2.5 });
+    doc.y += 9;
+  }
+  font("Helvetica", 10.5).text(drawable(c.closing), left, doc.y + 4, { width });
+  font("Helvetica-Bold", 10.5).text(drawable(c.signature), left, doc.y + 18, { width });
 
   const pages = doc.bufferedPageRange().count;
   doc.end();

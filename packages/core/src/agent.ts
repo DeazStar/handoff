@@ -17,3 +17,5 @@ export { verifyPerson, derivePatternContact, type PatternResult, type NameCheck,
 export type { Person, CompanyResearch } from "./research.js";
 export { ANSWER_KINDS, type AnswerInput, type PrepareInput, type Application, type StandardAnswer } from "./application.js";
 export { REMOTE_SCOPES, SPONSORSHIPS } from "./priority.js";
+export { coverText, COVER_LIMITS } from "./cover.js";
+export type { CoverPlan, ResolvedCover } from "./cover.js";

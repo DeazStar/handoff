@@ -25,6 +25,7 @@ If no job id was given, say "Give me a job id, for example /go 12" and stop.
 ## Do it
 For each step, read the matching command file in `.claude/commands/` and follow it exactly, but for this one job only:
 - Tailoring: `tailor.md`.
+- Cover letter: `cover.md`. The email and form steps write it themselves when they need one.
 - Email: `email.md`.
 - Form: `apply.md`.
 

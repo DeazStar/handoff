@@ -14,6 +14,7 @@ import { addCandidateJob, logEvent, transitionJob, type NewJob } from "./jobs.js
 import { getPreferences, getProfile, setPreferences, setProfile, type Preferences, type Profile } from "./profile.js";
 import { directoryStats, importDirectory, listDirectory, listScoutCompanies, setCompanyVerdict, type DirectoryCompany, type DirectoryFilter, type Verdict } from "./directory.js";
 import { setCareersPage } from "./careers.js";
+import { coverMode, getCoverMaterial, latestCover, prepareCover, type CoverPlan } from "./cover.js";
 import { listActionsDetailed, listJobs, getJob, sourceStats } from "./queries.js";
 import { allowedTransitions, type JobState } from "./states.js";
 
@@ -48,6 +49,11 @@ export function createAgentApi(db: DB) {
     listJobs: (state?: JobState, sort?: "updated" | "priority") => listJobs(db, { state, sort }),
     getJob: (id: number) => getJob(db, id),
     // Companies from the public lists. The agent judges them; it cannot overrule a verdict the user set.
+    // Cover letters: the agent supplies the paragraphs; the server checks the claims and draws the letter.
+    prepareCover: (plan: CoverPlan, jobId: number, contactId?: number) => prepareCover(db, plan, jobId, contactId),
+    getCoverMaterial: (jobId: number) => getCoverMaterial(db, jobId),
+    latestCover: (jobId: number) => latestCover(db, jobId),
+    coverMode: () => coverMode(db),
     listScoutCompanies: (limit: number) => listScoutCompanies(db, limit, true),
     setCareersPage: (companyId: number, r: { url: string } | { none: true; note?: string }) => setCareersPage(db, companyId, r, "agent"),
     setCompanyVerdict: (companyId: number, verdict: "potential" | "discarded", reason: string) => setCompanyVerdict(db, companyId, verdict, reason, "agent"),

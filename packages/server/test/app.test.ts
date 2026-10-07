@@ -436,6 +436,8 @@ describe("email review and send", () => {
     mkdirSync(join(dataDir, "documents"), { recursive: true });
     writeFileSync(join(dataDir, "documents", "job-1-cv-v1.pdf"), "%PDF-1.4 the cv");
     saveDocument(db, { jobId, kind: "cv", path: "documents/job-1-cv-v1.pdf", blocks: [{ text: "Built a payments API serving 50000 users", factIds: [fact] }] }, "agent");
+    writeFileSync(join(dataDir, "documents", "job-1-cover-v1.pdf"), "%PDF-1.4 the cover letter");
+    saveDocument(db, { jobId, kind: "cover", path: "documents/job-1-cover-v1.pdf", blocks: [{ text: "Dear hiring team,", factIds: [], kind: "boilerplate" }, { text: "I built a payments API serving 50000 users.", factIds: [fact] }] }, "agent");
     agent.transitionJob(jobId, "materials_ready");
     const contactId = agent.addContact({ companyId, email: "jobs@acme.example", sourceUrl: "https://acme.example/careers" });
     const { emailId } = agent.draftEmail({
@@ -466,6 +468,13 @@ describe("email review and send", () => {
     expect((await get("/api/emails/999")).status).toBe(404);
   });
 
+  it("shows the cover letter as an attachment of the draft", async () => {
+    const { emailId } = await seed();
+    const e = await (await get(`/api/emails/${emailId}`)).json();
+    expect(e.attachment).toBeTruthy();
+    expect(e.coverAttachment).toMatchObject({ version: 1 });
+  });
+
   it("sends the edited text with the CV attached and a BCC to the user, then records the application", async () => {
     const { emailId, jobId } = await seed();
     expect((await put(`/api/emails/${emailId}`, { subject: "Backend Engineer application", bodyText: "Hello,\n\nMy own words.\n\nAda" })).status).toBe(200);
@@ -475,8 +484,9 @@ describe("email review and send", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ to: "jobs@acme.example", subject: "Backend Engineer application", text: "Hello,\n\nMy own words.\n\nAda", bcc: ["ada@example.com"], replyTo: "ada@example.com" });
     expect(sent[0].from).toEqual({ name: "Ada Lovelace", address: "ada@example.com" });
-    expect(sent[0].attachments).toEqual([expect.objectContaining({ filename: "Ada-Lovelace-CV.pdf" })]);
+    expect(sent[0].attachments).toEqual([expect.objectContaining({ filename: "Ada-Lovelace-CV.pdf" }), expect.objectContaining({ filename: "Ada-Lovelace-Cover-Letter.pdf" })]);
     expect(sent[0].attachments[0].content.toString()).toBe("%PDF-1.4 the cv");
+    expect(sent[0].attachments[1].content.toString()).toBe("%PDF-1.4 the cover letter");
     expect(await status(emailId)).toBe("sent");
     expect(await state(jobId)).toBe("applied");
     expect(await (await get("/api/actions")).json()).toEqual([]);
@@ -633,7 +643,7 @@ describe("saved posting, people and research settings", () => {
   it("the review of a derived address carries its evidence", async () => {
     const agent = createAgentApi(db);
     const H = "human" as const;
-    setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", links: [], languages: [] }, H);
+    setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", links: [], languages: [], requiresSponsorship: true }, H);
     const co = agent.upsertCompany({ name: "Acme", domain: "acme.example" });
     const jobId = agent.addCandidateJob({ title: "Backend Engineer", url: "https://a.io/1", canonicalUrl: "https://a.io/1", companyId: co }).id;
     const fact = addFact(db, { kind: "experience", text: "Built a payments API serving 50000 users" }, H);
@@ -656,7 +666,7 @@ describe("form applications api", () => {
   async function formJob() {
     const H = "human" as const;
     const agent = createAgentApi(db);
-    setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", links: [], languages: [] }, H);
+    setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", links: [], languages: [], requiresSponsorship: true }, H);
     await put("/api/preferences", { roles: [], remotePolicy: "any", dailyApplicationLimit: 5, dailyDiscoveryLimit: 5, salaryFloor: 900, salaryCeiling: 2000, currency: "USD", salaryPeriod: "month" });
     const jobId = agent.addCandidateJob({ title: "Backend Engineer", url: "https://a.io/1", canonicalUrl: "https://a.io/1" }).id;
     const fact = addFact(db, { kind: "experience", text: "Built a payments API serving 50000 users" }, H);
@@ -665,7 +675,7 @@ describe("form applications api", () => {
     agent.transitionJob(jobId, "materials_ready");
     agent.prepareApplication({
       jobId, formUrl: "https://a.io/apply",
-      answers: [{ question: "Full name", answer: "Ada Lovelace", kind: "profile" }, { question: "Visa sponsorship?", answer: "Yes", kind: "profile", sensitive: true }],
+      answers: [{ question: "Full name", answer: "Ada Lovelace", kind: "profile", from: ["profile:fullName"] }, { question: "Visa sponsorship?", answer: "Yes", kind: "profile", from: ["profile:requiresSponsorship"], sensitive: true }],
       leftBlank: [{ question: "Gender", why: "Optional" }], salaryQuoted: 1400, salaryReason: "The target of the user's range.",
     });
     return { agent, jobId };
@@ -775,5 +785,17 @@ describe("company verdicts and career pages", () => {
     const all = (await (await get("/api/companies")).json());
     expect(all.stats).toMatchObject({ notSearched: 0, careers: { found: 2 }, readyToScout: 2 });
     expect(all.companies[0].careersUrl).toMatch(/^https:\/\/www\.ycombinator\.com\/companies\/.*\/jobs$/);
+  });
+});
+
+describe("profile sponsorship setting", () => {
+  it("saves yes, no and not said, and gives them back", async () => {
+    const put = (body: object) => fetch(base + "/api/profile", { method: "PUT", headers: json, body: JSON.stringify({ fullName: "Ada Lovelace", ...body }) });
+    expect((await put({ requiresSponsorship: true })).status).toBe(200);
+    expect((await (await get("/api/profile")).json()).requiresSponsorship).toBe(true);
+    await put({ requiresSponsorship: false });
+    expect((await (await get("/api/profile")).json()).requiresSponsorship).toBe(false);
+    await put({ requiresSponsorship: null });
+    expect((await (await get("/api/profile")).json()).requiresSponsorship).toBeUndefined();
   });
 });

@@ -14,7 +14,7 @@ const prefs = (over: object = {}) => ({
 
 function setup(opts: { route?: "form" | "email"; ready?: boolean; cv?: boolean } = {}) {
   const db = openDb(":memory:");
-  setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", links: [], languages: [], workAuthorization: "needs sponsorship" }, H);
+  setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", links: [], languages: [], workAuthorization: "needs sponsorship", requiresSponsorship: true }, H);
   setPreferences(db, prefs(), H);
   const agent = createAgentApi(db);
   const human = createHumanApi(db);
@@ -30,8 +30,8 @@ function setup(opts: { route?: "form" | "email"; ready?: boolean; cv?: boolean }
     jobId,
     formUrl: "https://acme.example/apply/1",
     answers: [
-      { question: "Full name", answer: "Ada Lovelace", kind: "profile" },
-      { question: "Do you need visa sponsorship?", answer: "Yes", kind: "profile", sensitive: true },
+      { question: "Full name", answer: "Ada Lovelace", kind: "profile", from: ["profile:fullName"] },
+      { question: "Do you need visa sponsorship?", answer: "Yes", kind: "profile", from: ["profile:requiresSponsorship"], sensitive: true },
       { question: "Why do you want to work here?", answer: "I built a payments API serving 50000 users and want to do that for wallets.", kind: "free_text", factIds: [fact] },
     ],
     leftBlank: [{ question: "Gender", why: "Optional demographic question; left for the user" }],
@@ -69,7 +69,7 @@ describe("preparing a form application", () => {
 
   it("checks every answer", () => {
     const s = setup();
-    const one = (a: object) => throws(() => s.agent.prepareApplication(s.input({ answers: [{ question: "Q", answer: "A", kind: "profile", ...a }] })));
+    const one = (a: object) => throws(() => s.agent.prepareApplication(s.input({ answers: [{ question: "Q", answer: "A", kind: "profile", from: ["profile:fullName"], ...a }] })));
     expect(one({ question: " " })).toMatch(/form's question/);
     expect(one({ answer: " " })).toMatch(/must have text/);
     expect(one({ kind: "made_up" })).toMatch(/Unknown answer kind/);
@@ -128,7 +128,7 @@ describe("consent and demographic answers", () => {
     expect(s.agent.listStandardAnswers().map((a) => a.label)).toContain("Gender");
     s.agent.prepareApplication(s.input({
       answers: [
-        { question: "Gender", answer: "Prefer not to say", kind: "standard" },
+        { question: "Gender", answer: "Prefer not to say", kind: "standard", from: ["standard:Gender"] },
         { question: "I consent to the processing of my data for this application", answer: "ticked", kind: "consent", sensitive: true },
       ],
     }));

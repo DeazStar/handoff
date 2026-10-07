@@ -30,7 +30,7 @@ beforeEach(async () => {
   db = openDb(":memory:");
   dataDir = mkdtempSync(join(tmpdir(), "jobhunt-form-"));
   uploadDir = mkdtempSync(join(tmpdir(), "jobhunt-upload-"));
-  setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", phone: "0911", location: "Addis Ababa, Ethiopia", links: ["https://ada.dev"], languages: [], workAuthorization: "needs sponsorship", noticePeriod: "1 week" }, H);
+  setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", phone: "0911", location: "Addis Ababa, Ethiopia", links: ["https://ada.dev"], languages: [], workAuthorization: "needs sponsorship", requiresSponsorship: true, noticePeriod: "1 week" }, H);
   setPreferences(db, { roles: [], seniority: [], locations: [], remotePolicy: "any", industries: [], exclusions: [], dailyApplicationLimit: 5, dailyDiscoveryLimit: 5, searchAnySite: true, salaryFloor: 900, salaryTarget: 1400, salaryCeiling: 2000, currency: "USD", salaryPeriod: "month" }, H);
   createHumanApi(db).setStandardAnswer("How did you hear about us?", "The company website");
   const agent = createAgentApi(db);
@@ -49,9 +49,9 @@ beforeEach(async () => {
 });
 
 const answers = () => [
-  { question: "Full name", answer: "Ada Lovelace", kind: "profile" },
-  { question: "Do you need sponsorship?", answer: "Yes", kind: "profile", sensitive: true },
-  { question: "How did you hear about us?", answer: "The company website", kind: "standard" },
+  { question: "Full name", answer: "Ada Lovelace", kind: "profile", from: ["profile:fullName"] },
+  { question: "Do you need sponsorship?", answer: "Yes", kind: "profile", from: ["profile:requiresSponsorship"], sensitive: true },
+  { question: "How did you hear about us?", answer: "The company website", kind: "standard", from: ["standard:How did you hear about us?"] },
   { question: "Why this role?", answer: "I built a payments API serving 50000 users.", kind: "free_text", factIds: [fact] },
 ];
 
@@ -133,5 +133,17 @@ describe("prepare_application", () => {
     expect(names.filter((n) => /submit|send|apply$|vault|password/i.test(n))).toEqual([]);
     await call("prepare_application", { jobId, formUrl: "https://acme.example/apply/1", answers: answers(), leftBlank: [] });
     expect(createHumanApi(db).getApplication(jobId)!.sentAt).toBeUndefined();
+  });
+
+  it("refuses an answer whose source does not exist, and flags one that differs from it", async () => {
+    const bad = (answers: object[]) => call("prepare_application", { jobId, formUrl: "https://acme.example/apply/1", answers, leftBlank: [] });
+    const noSource = await bad([{ question: "Email", answer: "ada@example.com", kind: "profile" }]);
+    expect(noSource.error).toBe(true);
+    expect(noSource.text).toMatch(/must name where it comes from/);
+    expect((await bad([{ question: "Pronouns", answer: "she/her", kind: "standard", from: ["standard:Pronouns"] }])).text).toMatch(/no saved standard answer/);
+    expect((await bad([{ question: "Phone", answer: "5550000", kind: "profile", from: ["profile:phone"], options: [] }])).error).toBe(false);
+    const saved = (await call("get_job", { jobId })).data;
+    expect(saved).toBeTruthy();
+    expect(db.prepare("SELECT answers FROM applications WHERE job_id = ?").get(jobId)).toMatchObject({ answers: expect.stringContaining('"check":"differs"') });
   });
 });

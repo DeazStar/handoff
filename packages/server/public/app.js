@@ -483,6 +483,11 @@ async function applicationView(jobId) {
   if (a.salaryQuoted) {
     view.append(h("div", { class: "card" }, h("strong", {}, `Salary entered: ${a.salaryQuoted} per ${a.salaryPeriod}`), h("div", { class: "muted" }, a.salaryReason || "")));
   }
+  const differ = a.answers.filter((x) => x.check === "differs");
+  if (differ.length) {
+    view.append(h("h2", {}, "These differ from your saved information"));
+    differ.forEach((x) => view.append(h("div", { class: "card company discarded-flag" }, h("div", { class: "muted" }, x.question), h("div", {}, x.answer), h("div", { class: "warn" }, x.checkNote || "Differs from its source"))));
+  }
   if (sensitive.length) {
     view.append(h("h2", {}, "Look at these first"));
     sensitive.forEach((x) => view.append(h("div", { class: "card" }, h("div", { class: "muted" }, x.question), h("div", {}, x.answer))));
@@ -490,8 +495,12 @@ async function applicationView(jobId) {
   view.append(h("h2", {}, `Everything entered (${a.answers.length})`));
   view.append(h("table", {}, a.answers.map((x) => h("tr", {},
     h("td", { class: "muted", style: "width:40%" }, x.question),
-    h("td", { style: "white-space:pre-wrap" }, x.answer),
-    h("td", {}, h("span", { class: "badge" }, x.kind.replace("_", " ")))))));
+    h("td", { style: "white-space:pre-wrap" }, x.answer.length > 400 ? `${x.answer.slice(0, 400)}...` : x.answer,
+      x.documentId ? h("div", {}, h("a", { href: `/api/documents/${x.documentId}/file`, target: "_blank", rel: "noopener noreferrer" }, "Open the cover letter PDF")) : null),
+    h("td", {}, h("span", { class: "badge" }, x.kind.replace("_", " ")),
+      x.check === "verified" ? h("span", { class: "badge good", title: x.checkNote || "Follows from its source" }, "✓ checked")
+        : x.check === "differs" ? h("span", { class: "badge gap", title: x.checkNote || "" }, "differs")
+        : x.check === "unchecked" ? h("span", { class: "badge", title: x.checkNote || "Could not be checked" }, "not checked") : null)))));
   view.append(h("h2", {}, `Left for you (${a.leftBlank.length})`));
   if (!a.leftBlank.length) view.append(h("div", { class: "muted" }, "Nothing."));
   a.leftBlank.forEach((x) => view.append(h("div", { class: "card" }, h("div", {}, x.question), h("div", { class: "muted" }, x.why))));
@@ -657,7 +666,8 @@ async function emailView(id) {
   if (e.status === "failed") view.append(h("div", { class: "card bad" }, `The last attempt failed: ${e.error || "unknown error"}`));
   view.append(subject.el, h("div", { class: "field" }, h("label", {}, "Message (this is exactly what will be sent)"), body));
   view.append(h("div", { class: "muted" },
-    e.attachment ? h("span", {}, "Attached: your CV for this job ", h("a", { href: `/api/documents/${e.attachment.documentId}/file`, target: "_blank", rel: "noopener noreferrer" }, "(open PDF)")) : "No CV attached."));
+    e.attachment ? h("span", {}, "Attached: your CV for this job ", h("a", { href: `/api/documents/${e.attachment.documentId}/file`, target: "_blank", rel: "noopener noreferrer" }, "(open PDF)"),
+      e.coverAttachment ? h("span", {}, "  and your cover letter ", h("a", { href: `/api/documents/${e.coverAttachment.documentId}/file`, target: "_blank", rel: "noopener noreferrer" }, "(open PDF)")) : "") : "No CV attached."));
   if (e.edited) view.append(h("div", { class: "muted" }, "You have edited the agent's draft."));
 
   const buttons = h("div", { class: "row", style: "margin-top:12px" });
@@ -807,6 +817,11 @@ async function settingsView() {
   const guidance = h("textarea", { placeholder: "e.g. Prefer international client work. Keep it to one page when possible. Always show my projects." });
   guidance.value = p.cvGuidance || "";
 
+  const coverLetters = h("select", {}, [["auto", "On: for every email job, and when a form asks for one"], ["off", "Off: only when I ask"]].map(([v, t]) => h("option", { value: v }, t)));
+  coverLetters.value = p.coverLetters || "auto";
+  const coverGuidance = h("textarea", { placeholder: "e.g. Warm but direct. Lead with my payments work. Never longer than three paragraphs." });
+  coverGuidance.value = p.coverGuidance || "";
+
   const savePrefs = act(() => api("PUT", "/api/preferences", {
     searchAnySite: anySite.checked,
     bccSelf: bcc.checked,
@@ -815,6 +830,8 @@ async function settingsView() {
     priorityMode: priorityMode.value,
     researchMinScore: researchScore.get(), researchScope: researchScope.value, batchSize: batch.get(),
     cvGuidance: guidance.value,
+    coverLetters: coverLetters.value,
+    coverGuidance: coverGuidance.value,
     countryPriority: countries.get(),
     employmentPriority: employment.get(),
     roles: roles.get(), seniority: level.get(), locations: where.get(), industries: industries.get(),
@@ -841,6 +858,9 @@ async function settingsView() {
       h("div", { class: "row" }, floor.el, target.el, ceiling.el, currency.el, h("div", { class: "field" }, h("label", {}, "Unit"), salaryPeriod)),
       countries.el, employment.el,
       h("div", { class: "field" }, h("label", {}, "How my CVs should be built (the agent follows this when tailoring)"), guidance),
+      h("div", { class: "field" }, h("label", {}, "Cover letters"), coverLetters,
+        h("div", { class: "muted" }, "When on, the agent writes one for each email job (attached with your CV) and for any form that has a cover letter field. Every claim must rest on your facts.")),
+      h("div", { class: "field" }, h("label", {}, "How my cover letters should read"), coverGuidance),
       h("h2", {}, "Daily limits"),
       h("div", { class: "muted" }, `Today: ${budget.addedToday} of ${budget.limit} jobs added.`),
       h("div", { class: "row" }, discovery.el, applications.el),
@@ -883,15 +903,20 @@ async function settingsView() {
   const loc = textField("Where you live", profile?.location);
   const links = textField("Links (comma separated)", (profile?.links || []).join(", "));
   const auth = textField("Work authorization", profile?.workAuthorization, { placeholder: "e.g. citizen, needs sponsorship" });
+  const sponsor = h("select", {}, [["", "Not said yet"], ["yes", "Yes, I need a visa sponsored"], ["no", "No, I do not"]].map(([v, t]) => h("option", { value: v }, t)));
+  sponsor.value = profile?.requiresSponsorship === true ? "yes" : profile?.requiresSponsorship === false ? "no" : "";
   const notice = textField("Notice period", profile?.noticePeriod, { placeholder: "e.g. 1 month" });
   const langs = textField("Languages (comma separated)", (profile?.languages || []).join(", "));
   const list = (f) => f.get().split(",").map((x) => x.trim()).filter(Boolean);
   view.append(
     h("h2", {}, "About you"),
-    h("div", { class: "card" }, name2.el, email.el, phone.el, loc.el, links.el, auth.el, notice.el, langs.el,
+    h("div", { class: "card" }, name2.el, email.el, phone.el, loc.el, links.el, auth.el,
+      h("div", { class: "field" }, h("label", {}, "Do you need a visa sponsored?"), sponsor,
+        h("div", { class: "muted" }, "Forms ask this. The agent answers from this setting, and leaves the question blank if it is not said.")),
+      notice.el, langs.el,
       h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "primary", onclick: act(() => api("PUT", "/api/profile", {
         fullName: name2.get(), email: email.get(), phone: phone.get(), location: loc.get(), links: list(links),
-        workAuthorization: auth.get(), noticePeriod: notice.get(), languages: list(langs),
+        workAuthorization: auth.get(), requiresSponsorship: sponsor.value === "yes" ? true : sponsor.value === "no" ? false : null, noticePeriod: notice.get(), languages: list(langs),
       })) }, "Save profile"))));
 }
 

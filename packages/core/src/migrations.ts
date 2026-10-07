@@ -503,4 +503,21 @@ ALTER TABLE preferences ADD COLUMN salary_period TEXT CHECK (salary_period IN ('
     // When /scout was last handed this company. A company handed out without getting a verdict goes behind the untried ones.
     sql: `ALTER TABLE companies ADD COLUMN scout_tried_at TEXT;`,
   },
+  {
+    id: 21,
+    name: "profile_sponsorship",
+    // Whether the user needs a visa sponsored. Null means not said yet. A form's sponsorship question is answered from it.
+    sql: `ALTER TABLE profile ADD COLUMN requires_sponsorship INTEGER CHECK (requires_sponsorship IN (0,1));`,
+  },
+  {
+    id: 22,
+    name: "cover_letters",
+    // cover_letters: auto (a letter for every email job and for forms that ask) or off.
+    // A sent email carries the cover letter PDF next to the CV.
+    sql: `
+      ALTER TABLE preferences ADD COLUMN cover_letters TEXT NOT NULL DEFAULT 'auto' CHECK (cover_letters IN ('auto','off'));
+      ALTER TABLE preferences ADD COLUMN cover_guidance TEXT;
+      ALTER TABLE emails ADD COLUMN cover_document_id INTEGER REFERENCES documents(id);
+    `,
+  },
 ];

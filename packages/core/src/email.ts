@@ -139,11 +139,12 @@ export function draftEmail(db: DB, d: DraftInput, actor: Actor): { emailId: numb
     const subject = (d.subject ?? `Application: ${job.title}, ${profile.fullName}`).trim();
     checkSubject(subject);
 
+    const cover = listDocuments(db, d.jobId).filter((x) => x.kind === "cover").sort((a, b) => b.version - a.version)[0];
     const doc = saveDocument(db, { jobId: d.jobId, kind: "email", path: "(email draft)", blocks: d.blocks }, actor);
     let emailId: number;
     try {
       emailId = Number(
-        db.prepare("INSERT INTO emails (job_id, contact_id, subject, body_document_id, attachment_document_id) VALUES (?, ?, ?, ?, ?)").run(d.jobId, d.contactId, subject, doc.id, cv.id).lastInsertRowid,
+        db.prepare("INSERT INTO emails (job_id, contact_id, subject, body_document_id, attachment_document_id, cover_document_id) VALUES (?, ?, ?, ?, ?, ?)").run(d.jobId, d.contactId, subject, doc.id, cv.id, cover?.id ?? null).lastInsertRowid,
       );
     } catch (e) {
       if (String((e as Error).message).includes("UNIQUE")) throw new Error("There is already an open draft for this job and contact. Discard it first");
@@ -169,6 +170,8 @@ export interface EmailDetail {
   bodyText: string;
   edited: boolean;
   attachment?: { documentId: number; version: number };
+  /** The cover letter PDF sent with the CV, when there is one. */
+  coverAttachment?: { documentId: number; version: number };
   status: "draft" | "sending" | "sent" | "failed" | "discarded";
   error?: string;
   messageId?: string;
@@ -207,6 +210,7 @@ export function getEmail(db: DB, id: number): EmailDetail | null {
   const emailDomain = contact.email.split("@")[1]!;
   const companyDomain: string | undefined = r.company_domain ?? undefined;
   const att = r.attachment_document_id ? (db.prepare("SELECT id, version FROM documents WHERE id = ?").get(r.attachment_document_id) as { id: number; version: number }) : undefined;
+  const cov = r.cover_document_id ? (db.prepare("SELECT id, version FROM documents WHERE id = ?").get(r.cover_document_id) as { id: number; version: number } | undefined) : undefined;
   return {
     id: r.id,
     jobId: r.job_id,
@@ -217,6 +221,7 @@ export function getEmail(db: DB, id: number): EmailDetail | null {
     bodyText: r.body_text ?? composeBody(db, JSON.parse(r.blocks)),
     edited: r.body_text !== null,
     attachment: att ? { documentId: att.id, version: att.version } : undefined,
+    coverAttachment: cov ? { documentId: cov.id, version: cov.version } : undefined,
     status: r.status,
     error: r.error ?? undefined,
     messageId: r.message_id ?? undefined,

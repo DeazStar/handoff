@@ -11,6 +11,8 @@ export interface Profile {
   location?: string;
   links: string[];
   workAuthorization?: string;
+  /** True when the user needs a visa sponsored. Unset means not said, and a form's sponsorship question is then left blank. */
+  requiresSponsorship?: boolean;
   noticePeriod?: string;
   languages: string[];
 }
@@ -40,6 +42,10 @@ export interface Preferences {
   bccSelf?: boolean;
   /** What the Apply button starts with: tick no consent box, the privacy consent only, or every box needed to submit. */
   consentDefault?: "none" | "privacy" | "required";
+  /** auto: a cover letter for every email job and for forms that ask. off: none. Default auto. */
+  coverLetters?: "auto" | "off";
+  /** Free text about how cover letters should read, e.g. tone and what to lead with. */
+  coverGuidance?: string;
   /** What ranks first: remote_first (worldwide remote on top), sponsored_first, or balanced. Default remote_first. */
   priorityMode?: PriorityMode;
   /** Whether the salary range is per month or per year. Needed before any salary is quoted on a form. */
@@ -63,7 +69,7 @@ export function requireHuman(actor: Actor, what: string): void {
 }
 
 export function getProfile(db: DB): Profile | null {
-  const r = db.prepare("SELECT * FROM profile WHERE id = 1").get() as Record<string, string | null> | undefined;
+  const r = db.prepare("SELECT * FROM profile WHERE id = 1").get() as Record<string, any> | undefined;
   if (!r) return null;
   return {
     fullName: r.full_name as string,
@@ -72,6 +78,7 @@ export function getProfile(db: DB): Profile | null {
     location: r.location ?? undefined,
     links: JSON.parse(r.links as string),
     workAuthorization: r.work_authorization ?? undefined,
+    requiresSponsorship: r.requires_sponsorship === null || r.requires_sponsorship === undefined ? undefined : r.requires_sponsorship === 1,
     noticePeriod: r.notice_period ?? undefined,
     languages: JSON.parse(r.languages as string),
   };
@@ -81,13 +88,13 @@ export function setProfile(db: DB, p: Profile, actor: Actor): void {
   requireHuman(actor, "the profile");
   if (!p.fullName.trim()) throw new Error("Profile needs a name");
   db.prepare(
-    `INSERT INTO profile (id, full_name, email, phone, location, links, work_authorization, notice_period, languages)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO profile (id, full_name, email, phone, location, links, work_authorization, notice_period, languages, requires_sponsorship)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        full_name = excluded.full_name, email = excluded.email, phone = excluded.phone,
        location = excluded.location, links = excluded.links,
        work_authorization = excluded.work_authorization, notice_period = excluded.notice_period,
-       languages = excluded.languages, updated_at = datetime('now')`,
+       languages = excluded.languages, requires_sponsorship = excluded.requires_sponsorship, updated_at = datetime('now')`,
   ).run(
     p.fullName.trim(),
     p.email ?? null,
@@ -97,6 +104,7 @@ export function setProfile(db: DB, p: Profile, actor: Actor): void {
     p.workAuthorization ?? null,
     p.noticePeriod ?? null,
     JSON.stringify(p.languages),
+    p.requiresSponsorship === undefined ? null : p.requiresSponsorship ? 1 : 0,
   );
   logEvent(db, actor, "profile_updated", null);
 }
@@ -141,6 +149,8 @@ export function getPreferences(db: DB): Preferences | null {
     salaryPeriod: r.salary_period ?? undefined,
     consentDefault: r.consent_default,
     priorityMode: r.priority_mode,
+    coverLetters: r.cover_letters,
+    coverGuidance: r.cover_guidance ?? undefined,
     researchMinScore: r.research_min_score,
     researchScope: r.research_scope,
     batchSize: r.batch_size,
@@ -169,6 +179,8 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
   if (p.salaryPeriod !== undefined && !['month', 'year'].includes(p.salaryPeriod)) throw new Error("salaryPeriod must be month or year");
   if (p.consentDefault !== undefined && !["none", "privacy", "required"].includes(p.consentDefault)) throw new Error("consentDefault must be none, privacy or required");
   if (p.priorityMode !== undefined && !PRIORITY_MODES.includes(p.priorityMode)) throw new Error("priorityMode must be remote_first, sponsored_first or balanced");
+  if (p.coverLetters !== undefined && !["auto", "off"].includes(p.coverLetters)) throw new Error("coverLetters must be auto or off");
+  if ((p.coverGuidance?.length ?? 0) > 1000) throw new Error("Cover letter guidance can be at most 1000 characters");
   const bs = p.batchSize ?? 10;
   if (!Number.isInteger(bs) || bs < 1 || bs > 20) throw new Error("batchSize must be a whole number from 1 to 20");
   const types = dedupeList(p.employmentPriority ?? []).map((t) => t.toLowerCase());
@@ -176,15 +188,15 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
   if (bad) throw new Error(`Employment priority can list full_time, part_time, contract and freelance, not "${bad}"`);
   db.prepare(
     `INSERT INTO preferences (id, roles, seniority, locations, remote_policy, industries, exclusions,
-       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit, search_any_site, cv_guidance, country_priority, employment_priority, bcc_self, research_min_score, research_scope, batch_size, salary_period, consent_default, priority_mode)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit, search_any_site, cv_guidance, country_priority, employment_priority, bcc_self, research_min_score, research_scope, batch_size, salary_period, consent_default, priority_mode, cover_letters, cover_guidance)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        roles = excluded.roles, seniority = excluded.seniority, locations = excluded.locations,
        remote_policy = excluded.remote_policy, industries = excluded.industries,
        exclusions = excluded.exclusions, salary_floor = excluded.salary_floor,
        salary_target = excluded.salary_target, salary_ceiling = excluded.salary_ceiling,
        currency = excluded.currency, daily_application_limit = excluded.daily_application_limit,
-       daily_discovery_limit = excluded.daily_discovery_limit, search_any_site = excluded.search_any_site, cv_guidance = excluded.cv_guidance, country_priority = excluded.country_priority, employment_priority = excluded.employment_priority, bcc_self = excluded.bcc_self, research_min_score = excluded.research_min_score, research_scope = excluded.research_scope, batch_size = excluded.batch_size, salary_period = excluded.salary_period, consent_default = excluded.consent_default, priority_mode = excluded.priority_mode,
+       daily_discovery_limit = excluded.daily_discovery_limit, search_any_site = excluded.search_any_site, cv_guidance = excluded.cv_guidance, country_priority = excluded.country_priority, employment_priority = excluded.employment_priority, bcc_self = excluded.bcc_self, research_min_score = excluded.research_min_score, research_scope = excluded.research_scope, batch_size = excluded.batch_size, salary_period = excluded.salary_period, consent_default = excluded.consent_default, priority_mode = excluded.priority_mode, cover_letters = excluded.cover_letters, cover_guidance = excluded.cover_guidance,
        updated_at = datetime('now')`,
   ).run(
     JSON.stringify(p.roles),
@@ -210,6 +222,8 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
     p.salaryPeriod ?? null,
     p.consentDefault ?? "none",
     p.priorityMode ?? "remote_first",
+    p.coverLetters ?? "auto",
+    p.coverGuidance?.trim() || null,
   );
   logEvent(db, actor, "preferences_updated", null);
 }

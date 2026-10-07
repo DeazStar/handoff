@@ -39,3 +39,5 @@ export { PRIORITY_MODES, REMOTE_SCOPES, SPONSORSHIPS, priorityScore, type Priori
 export { importDirectory, listDirectory, directoryStats, domainOf, listScoutCompanies, setCompanyVerdict, VERDICTS, type Verdict, type DirectoryCompany, type DirectoryRow, type DirectoryFilter, type DirectoryStats, type ImportResult } from "./directory.js";
 export { collectYc, mapYcCompany, YC_HIRING_URL } from "./yc.js";
 export { findCareersLink, findCareersPage, runCareerFinder, setCareersPage, looksScripted, type CareersOutcome, type FinderResult } from "./careers.js";
+export { PROFILE_FIELDS, checkProfileAnswer, checkStandardAnswer, resolveSources, checkObserved, type CheckResult, type Check, type ProfileField } from "./answerCheck.js";
+export { prepareCover, coverMode, latestCover, coverText, getCoverMaterial, CoverProblems, COVER_LIMITS, type CoverPlan, type ResolvedCover } from "./cover.js";

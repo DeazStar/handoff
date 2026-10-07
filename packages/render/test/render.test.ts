@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CvEntry, ResolvedCv } from "@jobhunt/core/agent";
-import { drawable, formatDateRange, renderCvPdf } from "../src/index.js";
+import { drawable, formatDateRange, renderCoverPdf, renderCvPdf } from "../src/index.js";
 
 const entry = (over: Partial<CvEntry> = {}): CvEntry => ({ id: 1, kind: "work", title: "Backend Engineer", organization: "Acme", location: "Remote", isCurrent: false, sortOrder: 1, ...over });
 const base = (): ResolvedCv => ({
@@ -50,5 +50,26 @@ describe("renderCvPdf", () => {
   it("renders a CV with only some sections", async () => {
     const { pages } = await renderCvPdf({ ...base(), summary: [], projects: [], education: [], skills: [] });
     expect(pages).toBe(1);
+  });
+});
+
+describe("cover letter", () => {
+  const letter = (paragraphs: string[]) => ({
+    header: { name: "Ada Lovelace", email: "ada@example.com", phone: "0900", location: "Addis Ababa, Ethiopia", links: ["https://www.ada.dev/"] },
+    date: "2026-10-07", recipient: "Jane Doe, Head of Engineering", company: "Acme", subject: "Application: Backend Engineer",
+    greeting: "Dear Jane,", paragraphs, closing: "Sincerely,", signature: "Ada Lovelace",
+  });
+  it("draws a one page PDF for a normal letter", async () => {
+    const p = "I built a payments API serving many users and ran it in production. ".repeat(6).trim();
+    const { pdf, pages } = await renderCoverPdf(letter([p, p, p]));
+    expect(pages).toBe(1);
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+  });
+  it("reports more than one page for a letter that is too long", async () => {
+    const p = "I built a payments API serving many users and ran it in production. ".repeat(40).trim();
+    expect((await renderCoverPdf(letter([p, p, p, p]))).pages).toBeGreaterThan(1);
+  });
+  it("replaces characters the fonts cannot draw instead of failing", async () => {
+    expect((await renderCoverPdf(letter(["ሰላም and café."]))).pages).toBe(1);
   });
 });

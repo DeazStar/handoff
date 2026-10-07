@@ -48,3 +48,5 @@ td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line
 .company.discarded { border-left: 4px solid var(--bad); opacity: 0.75; }
 .company .reason { font-size: 13px; margin: 4px 0; }
 button.good { color: var(--good); }
+.badge.good { color: var(--good); border-color: var(--good); }
+.company.discarded-flag { border-left: 4px solid var(--warn); }

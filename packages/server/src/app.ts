@@ -176,6 +176,7 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
       location: optText(b.location),
       links: strings(b.links),
       workAuthorization: optText(b.workAuthorization),
+      requiresSponsorship: b.requiresSponsorship === true ? true : b.requiresSponsorship === false ? false : undefined,
       noticePeriod: optText(b.noticePeriod),
       languages: strings(b.languages),
     });
@@ -198,6 +199,8 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
       dailyDiscoveryLimit: Number(b.dailyDiscoveryLimit),
       searchAnySite: b.searchAnySite !== false,
       cvGuidance: optText(b.cvGuidance),
+      coverLetters: b.coverLetters === "off" ? "off" : b.coverLetters === "auto" ? "auto" : undefined,
+      coverGuidance: optText(b.coverGuidance),
       countryPriority: strings(b.countryPriority),
       bccSelf: b.bccSelf !== false,
       researchMinScore: b.researchMinScore === undefined || b.researchMinScore === "" ? undefined : Number(b.researchMinScore),
@@ -326,6 +329,15 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
       if (!doc || !full.startsWith(root)) throw new HttpError(409, "The CV file for this email is missing. Run the tailoring again");
       try { attachments.push({ filename: `${profile.fullName.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "CV"}-CV.pdf`, content: readFileSync(full) }); }
       catch { throw new HttpError(409, "The CV file for this email is missing. Run the tailoring again"); }
+    }
+
+    if (email.coverAttachment) {
+      const cdoc = human.getDocument(email.coverAttachment.documentId);
+      const croot = resolve(opts.dataDir, "documents") + sep;
+      const cfull = cdoc ? resolve(opts.dataDir, cdoc.path) : "";
+      if (!cdoc || !cfull.startsWith(croot)) throw new HttpError(409, "The cover letter file for this email is missing. Write it again");
+      try { attachments.push({ filename: `${profile.fullName.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "Applicant"}-Cover-Letter.pdf`, content: readFileSync(cfull) }); }
+      catch { throw new HttpError(409, "The cover letter file for this email is missing. Write it again"); }
     }
 
     human.beginSend(id); // claims it: a second click gets an error and sends nothing

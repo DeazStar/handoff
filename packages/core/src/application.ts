@@ -3,10 +3,13 @@ import { queueAction } from "./actionQueue.js";
 import { checkProvenance, listDocuments, ProvenanceError, type Block } from "./documents.js";
 import { applicationsToday } from "./email.js";
 import { logEvent, transitionJob } from "./jobs.js";
-import { getPreferences, requireHuman } from "./profile.js";
+import { coverText } from "./cover.js";
+import { norm } from "./answerCheck.js";
+import { checkObserved, checkProfileAnswer, checkStandardAnswer, resolveSources, type Check } from "./answerCheck.js";
+import { getPreferences, getProfile, requireHuman } from "./profile.js";
 import type { Actor, JobState } from "./states.js";
 
-export const ANSWER_KINDS = ["profile", "standard", "policy", "free_text", "consent"] as const;
+export const ANSWER_KINDS = ["profile", "standard", "policy", "free_text", "consent", "cover_letter"] as const;
 export type AnswerKind = (typeof ANSWER_KINDS)[number];
 
 export interface AnswerInput {
@@ -19,6 +22,17 @@ export interface AnswerInput {
   sensitive?: boolean;
   /** A free-text answer that makes claims about the user must cite the facts behind them. */
   factIds?: number[];
+  /** For a cover letter answer: the saved cover letter document that was uploaded or pasted. */
+  documentId?: number;
+  /** Where a profile or standard answer comes from: "profile:email", "standard:<saved label>". The server checks the source exists. */
+  from?: string[];
+  /** For a dropdown or radio question: the form's own options. */
+  options?: string[];
+  /** The value read back from the form after filling it. */
+  observed?: string;
+  /** Set by the server: does the answer follow from its source? Never refused for a mismatch, only flagged. */
+  check?: Check;
+  checkNote?: string;
 }
 
 export interface PrepareInput {
@@ -115,6 +129,32 @@ export function prepareApplication(db: DB, input: PrepareInput, actor: Actor): {
       if (!ANSWER_KINDS.includes(a.kind)) throw new Error(`Unknown answer kind "${a.kind}"`);
     }
 
+    // A profile or standard answer must name its source, and the source must exist. If it does, the answer is saved:
+    // when the wording differs from the source it is flagged for the user to read, not refused.
+    const profile = getProfile(db);
+    const standard = listStandardAnswers(db);
+    const checkedAnswers: AnswerInput[] = input.answers.map((a) => {
+      const label = `"${a.question.slice(0, 60)}"`;
+      let r: { check: Check; note?: string } | undefined;
+      if (a.kind === "profile" || a.kind === "standard") {
+        const src = resolveSources(a.from, a.kind, { profile, standard });
+        if (!src.ok) throw new Error(`${label}: ${src.problem}`);
+        r = a.kind === "profile" ? checkProfileAnswer(a.question, a.answer, src.fields, profile!) : checkStandardAnswer(a.answer, src.labels, a.options);
+      } else if (a.kind === "cover_letter") {
+        const doc = a.documentId === undefined ? undefined : listDocuments(db, input.jobId).find((d) => d.id === a.documentId && d.kind === "cover");
+        if (!doc) throw new Error(`${label}: name the saved cover letter of this job in documentId (save_cover_letter returns it)`);
+        // Pasted text must be the saved letter; an upload only says so.
+        r = /^uploaded\b/i.test(a.answer.trim()) || norm(a.answer) === norm(coverText(doc))
+          ? { check: "verified", note: `Cover letter version ${doc.version}` }
+          : { check: "differs", note: `The text is not the saved cover letter (version ${doc.version})` };
+      } else if (a.kind === "free_text") {
+        r = a.factIds?.length ? { check: "verified", note: "Every claim cites your facts" } : { check: "unchecked" };
+      }
+      const seen = a.kind === "profile" || a.kind === "standard" ? checkObserved(a.answer, a.observed) : undefined;
+      if (seen) r = seen;
+      return r ? { ...a, check: r.check, checkNote: r.note?.slice(0, 300) } : { ...a, check: undefined, checkNote: undefined };
+    });
+
     // Free text about the user is checked like a CV or an email: every claim cites the facts it rests on.
     const blocks: Block[] = input.answers
       .filter((a) => a.kind === "free_text")
@@ -146,11 +186,11 @@ export function prepareApplication(db: DB, input: PrepareInput, actor: Actor): {
        ON CONFLICT(job_id) DO UPDATE SET route = 'form', prepared_at = datetime('now'), form_url = excluded.form_url, answers = excluded.answers,
          left_blank = excluded.left_blank, salary_quoted = excluded.salary_quoted, salary_period = excluded.salary_period,
          salary_reason = excluded.salary_reason, notes = excluded.notes, status = 'prepared', sent_at = NULL, approved_at = NULL`,
-    ).run(input.jobId, input.formUrl, JSON.stringify(input.answers), JSON.stringify(input.leftBlank), input.salaryQuoted ?? null, salaryPeriod, input.salaryReason?.trim() ?? null, input.notes?.slice(0, 1000) ?? null);
+    ).run(input.jobId, input.formUrl, JSON.stringify(checkedAnswers), JSON.stringify(input.leftBlank), input.salaryQuoted ?? null, salaryPeriod, input.salaryReason?.trim() ?? null, input.notes?.slice(0, 1000) ?? null);
 
-    queueAction(db, "confirm_submit", input.jobId, { formUrl: input.formUrl, answers: input.answers.length, leftBlank: input.leftBlank.length }, actor);
+    queueAction(db, "confirm_submit", input.jobId, { formUrl: input.formUrl, answers: input.answers.length, leftBlank: input.leftBlank.length, differ: checkedAnswers.filter((a) => a.check === "differs").length }, actor);
     transitionJob(db, input.jobId, "awaiting_approval", actor, "form prepared");
-    logEvent(db, actor, "application_prepared", input.jobId, { answers: input.answers.length, leftBlank: input.leftBlank.length });
+    logEvent(db, actor, "application_prepared", input.jobId, { answers: input.answers.length, leftBlank: input.leftBlank.length, differ: checkedAnswers.filter((a) => a.check === "differs").length });
     return { applicationId: getApplication(db, input.jobId)!.id };
   })();
 }
