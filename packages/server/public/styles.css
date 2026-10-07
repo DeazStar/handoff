@@ -36,3 +36,15 @@ td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line
 .row label { display: inline-flex; align-items: center; gap: 4px; }
 .bad { color: var(--bad); }
 .warn { color: var(--warn); }
+
+.tabs { display: flex; gap: 0; margin: 12px 0; }
+.tabs .tab { flex: 1; border-radius: 0; padding: 8px 12px; font-weight: 600; }
+.tabs .tab:first-child { border-radius: 6px 0 0 6px; }
+.tabs .tab:last-child { border-radius: 0 6px 6px 0; }
+.tabs .tab.on { color: #fff; background: var(--accent); border-color: var(--accent); }
+.tabs .tab.potential.on { background: var(--good); border-color: var(--good); }
+.tabs .tab.discarded.on { background: var(--bad); border-color: var(--bad); }
+.company.potential { border-left: 4px solid var(--good); }
+.company.discarded { border-left: 4px solid var(--bad); opacity: 0.75; }
+.company .reason { font-size: 13px; margin: 4px 0; }
+button.good { color: var(--good); }

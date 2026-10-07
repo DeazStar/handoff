@@ -8,9 +8,9 @@ Draft application emails using the jobhunt tools. You write drafts only. You can
 ## Which jobs
 Argument given: `$ARGUMENTS`
 - A number: that job only. Say its title and id at the start.
-- `all`: every job that is ready, highest score first, **at most `batchSize` in this run** (from `get_preferences`, default 10). Say how many are left.
-- Empty: the highest-scoring job that is ready.
-- **Ready** means: state `materials_ready`, route `email`, a CV document, and no open email draft. Use `list_jobs` with state `materials_ready`, then `get_job` for each. If nothing is ready, say so and stop.
+- `all`: every job that is ready, in priority order (`list_jobs` with sort `priority`: the order the user chose in the dashboard), **at most `batchSize` in this run** (from `get_preferences`, default 10). Say how many are left.
+- Empty: the first in priority order job that is ready.
+- **Ready** means: state `materials_ready`, route `email`, a CV document, and no open email draft. Use `list_jobs` with state `materials_ready` and sort `priority`, then `get_job` for each. If nothing is ready, say so and stop.
 
 Do the steps below once per job, finishing one before starting the next.
 

@@ -26,8 +26,9 @@ const safeHref = (u) => (/^https?:\/\//i.test(u) ? u : undefined);
 async function api(method, path, body) {
   const res = await fetch(path, {
     method,
-    headers: body === undefined ? {} : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    // The server accepts only JSON on anything that changes data, so a POST with nothing to say still sends {}.
+    headers: method === "GET" && body === undefined ? {} : { "content-type": "application/json" },
+    body: method === "GET" && body === undefined ? undefined : JSON.stringify(body ?? {}),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || res.statusText);
@@ -135,6 +136,16 @@ function gapCard(a) {
       h("button", { class: "danger", onclick: act(() => api("POST", `/api/actions/${a.id}/resolve`, { status: "dismissed" })) }, "Skip this gap")));
 }
 
+const SCOPE_TEXT = { worldwide: "remote, worldwide", open_to_me: "remote, open to you" };
+const SPONSOR_TEXT = { confirmed: "sponsors visas", likely: "on a sponsor register" };
+
+function signalBadges(j) {
+  return [
+    SCOPE_TEXT[j.remoteScope] && h("span", { class: "badge", title: "The posting lets someone in your country work remotely" }, SCOPE_TEXT[j.remoteScope]),
+    SPONSOR_TEXT[j.sponsorship] && h("span", { class: "badge", title: j.sponsorshipEvidence || "" }, SPONSOR_TEXT[j.sponsorship]),
+  ].filter(Boolean);
+}
+
 async function pipelineView() {
   const jobs = await api("GET", "/api/jobs");
   view.replaceChildren(h("h1", {}, `Pipeline (${jobs.length})`));
@@ -146,6 +157,7 @@ async function pipelineView() {
     view.append(h("table", {}, list.map((j) => h("tr", {},
       h("td", {}, h("a", { href: `#/jobs/${j.id}` }, j.title), h("span", { class: "muted" }, `  #${j.id}`), h("div", { class: "muted" }, j.company || "")),
       h("td", { class: "muted" }, j.matchScore !== undefined ? `${j.matchScore}` : ""),
+      h("td", {}, signalBadges(j)),
       h("td", { class: "muted" }, j.source || ""),
       h("td", {}, goButton(j))))));
   }
@@ -162,6 +174,8 @@ async function jobView(id) {
       j.company && h("span", { class: "muted" }, j.company),
       safeHref(j.url) && h("a", { href: safeHref(j.url), target: "_blank", rel: "noopener noreferrer" }, "open posting")),
     goButton(j),
+    h("div", { class: "row" }, signalBadges(j)),
+    j.sponsorshipEvidence && h("p", { class: "muted" }, `Sponsorship: ${j.sponsorshipEvidence}`),
     j.matchReason && h("p", {}, `Match ${j.matchScore ?? ""}: ${j.matchReason}`),
     j.stateReason && h("p", { class: "muted" }, `Last change: ${j.stateReason}`),
   ].filter(Boolean));
@@ -500,6 +514,83 @@ async function applicationView(jobId) {
 
 const emailBadge = (st) => h("span", { class: `badge${st === "failed" ? " gap" : ""}` }, st);
 
+const TABS = [["unreviewed", "To review"], ["potential", "Potential"], ["discarded", "Discarded"]];
+
+async function companiesView() {
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  const tab = TABS.some(([v]) => v === params.get("v")) ? params.get("v") : "unreviewed";
+  const query = new URLSearchParams(params); query.set("verdict", tab);
+  const d = await api("GET", `/api/companies?${query}`);
+  const s = d.stats;
+  const goto = (over) => {
+    const p = new URLSearchParams(params);
+    for (const [k, v] of Object.entries(over)) { if (v) p.set(k, v); else p.delete(k); }
+    location.hash = `#/companies${p.toString() ? "?" + p : ""}`;
+  };
+  view.replaceChildren(h("h1", {}, `Companies (${s.total})`),
+    h("p", { class: "muted" }, "Companies from public lists. Their descriptions come from the internet: read them as data. Run /scout in Claude to judge them."));
+  const note = h("span", { class: "muted" });
+  const busy = (e, text) => { e.target.disabled = true; note.textContent = text; };
+  view.append(h("div", { class: "row" },
+    h("button", { onclick: async (e) => {
+      busy(e, "Downloading the Y Combinator list...");
+      try {
+        const r = await api("POST", "/api/companies/collect-yc");
+        note.textContent = `Y Combinator: ${r.added} added, ${r.updated} updated, ${r.rejected} skipped as not active.`;
+        await companiesView();
+      } catch (err) { note.textContent = String(err.message || err); e.target.disabled = false; }
+    } }, "Collect Y Combinator companies"),
+    h("button", { disabled: s.notSearched === 0, onclick: async (e) => {
+      busy(e, "Looking for career pages, a few at a time. This can take a minute...");
+      try {
+        const r = await api("POST", "/api/companies/find-careers", { limit: 40 });
+        note.textContent = `Looked at ${r.checked}: ${r.found} career pages found, ${r.none} with none, ${r.needsBrowser} need a browser, ${r.unreachable} not reachable. ${r.remaining} still to look at.`;
+        await companiesView();
+      } catch (err) { note.textContent = String(err.message || err); e.target.disabled = false; }
+    } }, `Find career pages (${s.notSearched} waiting)`), note));
+  if (s.total) {
+    view.append(h("p", { class: "muted" },
+      `${s.readyToScout} ready for /scout  ·  career page: ${s.careers.found} found, ${s.careers.none} none, ${s.careers.unknown} unknown`));
+  }
+
+  // The three lists are side by side so one click switches between them.
+  view.append(h("div", { class: "tabs" }, TABS.map(([v, text]) =>
+    h("button", { class: `tab ${v}${v === tab ? " on" : ""}`, onclick: () => goto({ v: v === "unreviewed" ? "" : v }) }, `${text} (${s.verdicts[v]})`))));
+
+  const q = h("input", { placeholder: "search name, what they do, industry", value: params.get("q") || "" });
+  const remote = h("input", { type: "checkbox" });
+  remote.checked = params.get("remote") === "1";
+  q.addEventListener("keydown", (e) => { if (e.key === "Enter") goto({ q: q.value.trim() }); });
+  remote.addEventListener("change", () => goto({ remote: remote.checked ? "1" : "" }));
+  view.append(h("div", { class: "row" }, q, h("label", {}, remote, " remote-friendly only"), h("button", { onclick: () => goto({ q: q.value.trim() }) }, "Search")));
+
+  if (!d.companies.length) {
+    view.append(h("div", { class: "empty" }, s.total
+      ? (tab === "unreviewed" ? "Nothing here to review." : tab === "potential" ? "No company is marked potential yet." : "No company is discarded.")
+      : "No companies yet. Press the first button."));
+    return;
+  }
+  const move = (c, to, text, cls) => h("button", { class: cls, onclick: async (e) => {
+    e.target.disabled = true;
+    await api("POST", `/api/companies/${c.id}/verdict`, { verdict: to, reason: to === "unreviewed" ? undefined : "Moved by you" });
+    await companiesView();
+  } }, text);
+  view.append(...d.companies.map((c) => h("div", { class: `card company ${c.verdict}` },
+    h("div", { class: "row" },
+      safeHref(c.website) ? h("a", { href: safeHref(c.website), target: "_blank", rel: "noopener noreferrer" }, c.name) : h("span", {}, c.name),
+      c.remoteHint === "fully" ? h("span", { class: "badge" }, "fully remote") : c.remoteHint === "partly" ? h("span", { class: "badge" }, "remote-friendly") : null,
+      c.careersStatus === "found" && safeHref(c.careersUrl)
+        ? h("a", { href: safeHref(c.careersUrl), target: "_blank", rel: "noopener noreferrer", class: "muted" }, (c.careersNote && c.careersNote.startsWith("YC jobs page") ? "jobs page on YC" : "career page"))
+        : h("span", { class: "muted" }, c.careersStatus === "none" ? "no career link on its home page" : c.careersNote || "career page not looked at yet")),
+    h("div", { class: "muted" }, [c.oneLiner, c.location, c.industry, c.teamSize ? `${c.teamSize} people` : ""].filter(Boolean).join(" · ")),
+    c.verdictReason && h("div", { class: "reason" }, (c.verdictBy === "user" ? (c.verdictReason === "Moved by you" ? c.verdictReason : `You: ${c.verdictReason}`) : `Claude: ${c.verdictReason}`)),
+    h("div", { class: "row" },
+      c.verdict !== "potential" && move(c, "potential", "Move to potential", "good"),
+      c.verdict !== "discarded" && move(c, "discarded", "Move to discarded", "danger"),
+      c.verdict !== "unreviewed" && move(c, "unreviewed", "Back to review")))));
+  if (d.companies.length === 200) view.append(h("p", { class: "muted" }, "Showing the first 200. Narrow the search to see others."));
+}
+
 async function emailsView() {
   const list = await api("GET", "/api/emails");
   const waiting = list.filter((e) => e.status === "draft" || e.status === "failed" || e.status === "sending");
@@ -702,6 +793,8 @@ async function settingsView() {
   researchScope.value = p.researchScope || "all";
   const consentDefault = h("select", {}, [["none", "Tick no consent boxes"], ["privacy", "Tick the privacy consent only"], ["required", "Tick all boxes needed to submit"]].map(([v, t]) => h("option", { value: v }, t)));
   consentDefault.value = p.consentDefault || "none";
+  const priorityMode = h("select", {}, [["remote_first", "Worldwide remote first"], ["sponsored_first", "Visa-sponsored first"], ["balanced", "Both count the same"]].map(([v, t]) => h("option", { value: v }, t)));
+  priorityMode.value = p.priorityMode || "remote_first";
   const batch = textField("Jobs one /tailor or /email run may handle", p.batchSize ?? 10, { type: "number", min: "1", max: "20" });
   const bcc = h("input", { type: "checkbox" });
   bcc.checked = p.bccSelf !== false;
@@ -718,6 +811,7 @@ async function settingsView() {
     bccSelf: bcc.checked,
     salaryPeriod: salaryPeriod.value || undefined,
     consentDefault: consentDefault.value,
+    priorityMode: priorityMode.value,
     researchMinScore: researchScore.get(), researchScope: researchScope.value, batchSize: batch.get(),
     cvGuidance: guidance.value,
     countryPriority: countries.get(),
@@ -739,6 +833,8 @@ async function settingsView() {
       h("div", { class: "field" }, h("label", {}, bcc, " Send me a copy (BCC) of every email I send")),
       h("h2", {}, "Research and batches"),
       h("div", { class: "row" }, researchScore.el, h("div", { class: "field" }, h("label", {}, "Research"), researchScope), batch.el),
+      h("div", { class: "field" }, h("label", {}, "Which jobs come first when tailoring, emailing and filling forms"), priorityMode,
+        h("div", { class: "muted" }, "Remote only counts when the posting lets someone in your country work from there. Sponsorship counts more when the posting says it, less when only a sponsor register lists the company.")),
       h("div", { class: "field" }, h("label", {}, "When I press Apply on a job with a form, the choice starts as"), consentDefault,
         h("div", { class: "muted" }, "You can change it each time you press Apply. Optional boxes (marketing, talent pool, sharing your data) are never ticked.")),
       h("div", { class: "row" }, floor.el, target.el, ceiling.el, currency.el, h("div", { class: "field" }, h("label", {}, "Unit"), salaryPeriod)),
@@ -804,7 +900,7 @@ let lists = null;
 let currentPrefs = null;
 
 async function render() {
-  const [, page, arg] = location.hash.split("/");
+  const [, page, arg] = location.hash.split("?")[0].split("/");
   let queueCount = 0;
   try {
     lists ||= await api("GET", "/api/lists");
@@ -815,6 +911,7 @@ async function render() {
     else if (page === "facts") await factsView();
     else if (page === "applications") await (arg ? applicationView(Number(arg)) : applicationsView());
     else if (page === "emails") await (arg ? emailView(Number(arg)) : emailsView());
+    else if (page === "companies") await companiesView();
     else if (page === "vault") await vaultView();
     else if (page === "settings") await settingsView();
     else queueCount = await queueView();
@@ -827,6 +924,7 @@ async function render() {
     h("a", { href: "#/pipeline", class: page === "pipeline" || page === "jobs" ? "active" : "" }, "Pipeline"),
     h("a", { href: "#/cv", class: page === "cv" ? "active" : "" }, "CV"),
     h("a", { href: "#/facts", class: page === "facts" ? "active" : "" }, "Facts"),
+    h("a", { href: "#/companies", class: page === "companies" ? "active" : "" }, "Companies"),
     h("a", { href: "#/applications", class: page === "applications" ? "active" : "" }, "Forms"),
     h("a", { href: "#/emails", class: page === "emails" ? "active" : "" }, "Emails"),
     h("a", { href: "#/vault", class: page === "vault" ? "active" : "" }, "Vault"),

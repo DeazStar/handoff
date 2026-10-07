@@ -21,6 +21,7 @@ let sent: any[] = [];
 let failNext: object | undefined;
 let dryMode = false;
 let domainTakesMail = true;
+let ycFake: any[] = [];
 
 beforeEach(async () => {
   db = openDb(":memory:");
@@ -30,11 +31,15 @@ beforeEach(async () => {
   failNext = undefined;
   dryMode = false;
   domainTakesMail = true;
+  ycFake = [
+    { name: "Acme", website: "https://acme.io", oneLiner: "Payments", remoteHint: "fully", source: "yc", sourceRef: "acme" },
+    { name: "Plain Co", website: "https://plain.co", source: "yc", sourceRef: "plain" },
+  ];
   const fake = { sendMail: async (msg: any) => { if (failNext) { const e = failNext; failNext = undefined; throw e; } sent.push(msg); return { messageId: `<test-${sent.length}@example.com>` }; }, close() {} } as never;
   const live = createMailer(vault, { dryRun: false, transportFactory: () => fake });
   const dry = createMailer(vault, { dryRun: true, transportFactory: () => nodemailer.createTransport({ jsonTransport: true }) });
   const mailer = { send: (m: Parameters<typeof live.send>[0]) => (dryMode ? dry : live).send(m) };
-  server = createApp(db, { token: TOKEN, dataDir, vault, mailer, verifyDeps: { hasMail: async () => domainTakesMail, fetchPage: async () => "" } });
+  server = createApp(db, { token: TOKEN, dataDir, vault, mailer, verifyDeps: { hasMail: async () => domainTakesMail, fetchPage: async () => "" }, collectYc: async () => ({ companies: ycFake, rejected: 2 }) });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   port = (server.address() as AddressInfo).port;
   base = `http://127.0.0.1:${port}`;
@@ -715,5 +720,60 @@ describe("form applications api", () => {
   it("needs the token", async () => {
     expect((await fetch(base + "/api/applications")).status).toBe(401);
     expect((await fetch(base + "/api/applications/1/submitted", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+  });
+});
+
+describe("companies", () => {
+  it("needs the token", async () => {
+    expect((await fetch(base + "/api/companies")).status).toBe(401);
+    expect((await fetch(base + "/api/companies/collect-yc", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+  });
+
+  it("starts empty, collects the YC list, and filters it", async () => {
+    expect(await (await get("/api/companies")).json()).toMatchObject({ stats: { total: 0 }, companies: [] });
+    const r = await (await post("/api/companies/collect-yc", {})).json();
+    expect(r).toEqual({ added: 2, updated: 0, skipped: 0, rejected: 2 });
+    const all = await (await get("/api/companies")).json();
+    expect(all.stats).toMatchObject({ total: 2, bySource: [{ source: "yc", companies: 2, remote: 1 }] });
+    expect(all.companies.map((c: any) => c.name)).toEqual(["Acme", "Plain Co"]);
+    expect((await (await get("/api/companies?remote=1")).json()).companies.map((c: any) => c.name)).toEqual(["Acme"]);
+    expect((await (await get("/api/companies?q=pay")).json()).companies.map((c: any) => c.name)).toEqual(["Acme"]);
+    expect((await (await post("/api/companies/collect-yc", {})).json())).toMatchObject({ added: 0, updated: 2 });
+  });
+});
+
+describe("company verdicts and career pages", () => {
+  const list = async (v: string) => (await (await get(`/api/companies?verdict=${v}`)).json()).companies.map((c: any) => c.name);
+
+  it("moves a company between the three lists, and the user's choice sticks", async () => {
+    await post("/api/companies/collect-yc", {});
+    const id = (await (await get("/api/companies")).json()).companies.find((c: any) => c.name === "Acme").id;
+    expect(await list("unreviewed")).toEqual(["Acme", "Plain Co"]);
+    expect((await post(`/api/companies/${id}/verdict`, { verdict: "discarded", reason: "Moved by you" })).status).toBe(200);
+    expect(await list("discarded")).toEqual(["Acme"]);
+    expect(await list("unreviewed")).toEqual(["Plain Co"]);
+    await post(`/api/companies/${id}/verdict`, { verdict: "potential" });
+    expect(await list("potential")).toEqual(["Acme"]);
+    expect((await (await get("/api/companies")).json()).stats.verdicts).toEqual({ unreviewed: 1, potential: 1, discarded: 0 });
+    await post(`/api/companies/${id}/verdict`, { verdict: "unreviewed" });
+    expect(await list("unreviewed")).toEqual(["Acme", "Plain Co"]);
+  });
+
+  it("rejects an unknown verdict and needs the token", async () => {
+    await post("/api/companies/collect-yc", {});
+    const id = (await (await get("/api/companies")).json()).companies[0].id;
+    expect((await post(`/api/companies/${id}/verdict`, { verdict: "maybe" })).status).toBe(400);
+    expect((await fetch(base + `/api/companies/${id}/verdict`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ verdict: "potential" }) })).status).toBe(401);
+    expect((await fetch(base + "/api/companies/find-careers", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+  });
+
+  it("finds career pages with plain code and reports the counts", async () => {
+    await post("/api/companies/collect-yc", {});
+    const r = await (await post("/api/companies/find-careers", { limit: 10 })).json();
+    // The test's page fetcher returns an empty page: nothing is linked, so both YC companies get their YC jobs page.
+    expect(r).toMatchObject({ checked: 2, found: 2, needsBrowser: 0, remaining: 0 });
+    const all = (await (await get("/api/companies")).json());
+    expect(all.stats).toMatchObject({ notSearched: 0, careers: { found: 2 }, readyToScout: 2 });
+    expect(all.companies[0].careersUrl).toMatch(/^https:\/\/www\.ycombinator\.com\/companies\/.*\/jobs$/);
   });
 });

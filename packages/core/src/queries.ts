@@ -1,5 +1,6 @@
 import type { DB } from "./db.js";
 import type { JobState } from "./states.js";
+import { priorityScore, type PriorityMode, type RemoteScope, type Sponsorship } from "./priority.js";
 
 export interface JobRow {
   id: number;
@@ -20,6 +21,11 @@ export interface JobRow {
   hasDescription: boolean;
   postedBy?: string;
   applyUrl?: string;
+  remoteScope?: RemoteScope;
+  sponsorship: Sponsorship;
+  sponsorshipEvidence?: string;
+  /** Match score plus the remote and sponsorship bonus for the user's priority mode. Only for ordering. */
+  priority?: number;
 }
 
 const toJob = (r: any): JobRow => ({
@@ -40,6 +46,9 @@ const toJob = (r: any): JobRow => ({
   hasDescription: !!r.description,
   postedBy: r.posted_by ?? undefined,
   applyUrl: r.apply_url ?? undefined,
+  remoteScope: r.remote_scope ?? undefined,
+  sponsorship: r.sponsorship,
+  sponsorshipEvidence: r.sponsorship_evidence ?? undefined,
 });
 
 const JOB_SELECT = `
@@ -48,11 +57,15 @@ const JOB_SELECT = `
   LEFT JOIN companies c ON c.id = j.company_id
   LEFT JOIN sources s ON s.id = j.source_id`;
 
-export function listJobs(db: DB, opts: { state?: JobState } = {}): JobRow[] {
+export function listJobs(db: DB, opts: { state?: JobState; sort?: "updated" | "priority" } = {}): JobRow[] {
   const rows = opts.state
     ? db.prepare(`${JOB_SELECT} WHERE j.state = ? ORDER BY j.updated_at DESC, j.id DESC`).all(opts.state)
     : db.prepare(`${JOB_SELECT} ORDER BY j.updated_at DESC, j.id DESC`).all();
-  return rows.map(toJob);
+  const mode = ((db.prepare("SELECT priority_mode FROM preferences WHERE id = 1").get() as { priority_mode: PriorityMode } | undefined)?.priority_mode ?? "remote_first") as PriorityMode;
+  const jobs = rows.map(toJob);
+  for (const j of jobs) j.priority = priorityScore(j.matchScore, j.remoteScope, j.sponsorship, mode);
+  if (opts.sort === "priority") jobs.sort((a, b) => b.priority! - a.priority! || b.id - a.id);
+  return jobs;
 }
 
 export interface JobDetail {

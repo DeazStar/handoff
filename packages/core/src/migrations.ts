@@ -451,4 +451,50 @@ ALTER TABLE preferences ADD COLUMN salary_period TEXT CHECK (salary_period IN ('
     // Only the dashboard reads it. Each run still carries its own word in the command the user pastes.
     sql: `ALTER TABLE preferences ADD COLUMN consent_default TEXT NOT NULL DEFAULT 'none' CHECK (consent_default IN ('none','privacy','required'));`,
   },
+  {
+    id: 17,
+    name: "remote_and_sponsorship",
+    sql: `
+      ALTER TABLE jobs ADD COLUMN remote_scope TEXT CHECK (remote_scope IN ('worldwide','open_to_me','closed','unclear'));
+      ALTER TABLE jobs ADD COLUMN sponsorship TEXT NOT NULL DEFAULT 'unknown' CHECK (sponsorship IN ('confirmed','likely','unknown'));
+      ALTER TABLE jobs ADD COLUMN sponsorship_evidence TEXT;
+      ALTER TABLE preferences ADD COLUMN priority_mode TEXT NOT NULL DEFAULT 'remote_first' CHECK (priority_mode IN ('remote_first','sponsored_first','balanced'));
+    `,
+  },
+  {
+    id: 18,
+    name: "company_directory",
+    // Companies collected from public lists, before any job from them is found.
+    // careers_status: unknown (never looked), found (careers_url is set), none (looked, no careers page).
+    sql: `
+      ALTER TABLE companies ADD COLUMN website TEXT;
+      ALTER TABLE companies ADD COLUMN location TEXT;
+      ALTER TABLE companies ADD COLUMN one_liner TEXT;
+      ALTER TABLE companies ADD COLUMN description TEXT;
+      ALTER TABLE companies ADD COLUMN industry TEXT;
+      ALTER TABLE companies ADD COLUMN team_size INTEGER;
+      ALTER TABLE companies ADD COLUMN remote_hint TEXT CHECK (remote_hint IN ('fully','partly'));
+      ALTER TABLE companies ADD COLUMN source TEXT;
+      ALTER TABLE companies ADD COLUMN source_ref TEXT;
+      ALTER TABLE companies ADD COLUMN careers_status TEXT NOT NULL DEFAULT 'unknown' CHECK (careers_status IN ('unknown','found','none'));
+      ALTER TABLE companies ADD COLUMN careers_checked_at TEXT;
+      ALTER TABLE companies ADD COLUMN collected_at TEXT;
+      CREATE UNIQUE INDEX idx_companies_source_ref ON companies(source, source_ref) WHERE source IS NOT NULL;
+    `,
+  },
+  {
+    id: 19,
+    name: "company_verdicts",
+    // verdict: unreviewed (nobody has judged it), potential (it has an opening that fits) or discarded (nothing fits).
+    // verdict_by: agent or user. A user's verdict is never changed by the agent.
+    // careers_note: why the career page is still unknown (for example, the page needs a browser).
+    sql: `
+      ALTER TABLE companies ADD COLUMN verdict TEXT NOT NULL DEFAULT 'unreviewed' CHECK (verdict IN ('unreviewed','potential','discarded'));
+      ALTER TABLE companies ADD COLUMN verdict_reason TEXT;
+      ALTER TABLE companies ADD COLUMN verdict_by TEXT CHECK (verdict_by IN ('agent','user'));
+      ALTER TABLE companies ADD COLUMN verdict_at TEXT;
+      ALTER TABLE companies ADD COLUMN careers_note TEXT;
+      CREATE INDEX idx_companies_verdict ON companies(verdict);
+    `,
+  },
 ];

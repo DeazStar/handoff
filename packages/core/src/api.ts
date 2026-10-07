@@ -3,7 +3,7 @@ import { addPerson, getCompanyResearch, listPeople, markCompanyResearched } from
 import { getJobDescription } from "./queries.js";
 import { saveJobDetails } from "./jobs.js";
 import { addContact, applicationsToday, beginSend, discardEmail, draftEmail, failSend, finishSend, getContact, getEmail, listContacts, listEmails, markContactBounced, noContactFound, releaseSend, updateEmail, type DraftInput } from "./email.js";
-import { addCandidateJobWithinBudget, checkCandidate, logSkippedCandidate, type SkipReason, discoveryBudget, listSources, recordVerification, setMatch, setRoute, setSourceEnabled, upsertCompany, upsertSource, type Verification } from "./agentOps.js";
+import { addCandidateJobWithinBudget, checkCandidate, logSkippedCandidate, type SkipReason, discoveryBudget, listSources, recordVerification, setMatch, type JobSignals, setRoute, setSourceEnabled, upsertCompany, upsertSource, type Verification } from "./agentOps.js";
 import { confirmGap, listOpenActions, queueAction, reportGap, resolveAction, type ActionKind, type GapReport } from "./actionQueue.js";
 import type { DB } from "./db.js";
 import { deleteDocument, getDocument, listDocuments, nextDocumentVersion, saveDocument, type NewDocument } from "./documents.js";
@@ -12,6 +12,8 @@ import { prepareCv, type CvPlan } from "./cvPlan.js";
 import { addFact, deleteFact, getFacts, listFacts, makeFactGeneral, updateFact, type FactKind, type NewFact } from "./facts.js";
 import { addCandidateJob, logEvent, transitionJob, type NewJob } from "./jobs.js";
 import { getPreferences, getProfile, setPreferences, setProfile, type Preferences, type Profile } from "./profile.js";
+import { directoryStats, importDirectory, listDirectory, listScoutCompanies, setCompanyVerdict, type DirectoryCompany, type DirectoryFilter, type Verdict } from "./directory.js";
+import { setCareersPage } from "./careers.js";
 import { listActionsDetailed, listJobs, getJob, sourceStats } from "./queries.js";
 import { allowedTransitions, type JobState } from "./states.js";
 
@@ -43,8 +45,12 @@ export function createAgentApi(db: DB) {
     nextDocumentVersion: (jobId: number | null, kind: NewDocument["kind"]) => nextDocumentVersion(db, jobId, kind),
     getCvMaterial: (forJob: number | null) => getCvMaterial(db, forJob),
     prepareCv: (plan: CvPlan, jobId: number | null) => prepareCv(db, plan, jobId),
-    listJobs: (state?: JobState) => listJobs(db, { state }),
+    listJobs: (state?: JobState, sort?: "updated" | "priority") => listJobs(db, { state, sort }),
     getJob: (id: number) => getJob(db, id),
+    // Companies from the public lists. The agent judges them; it cannot overrule a verdict the user set.
+    listScoutCompanies: (limit: number) => listScoutCompanies(db, limit),
+    setCareersPage: (companyId: number, r: { url: string } | { none: true; note?: string }) => setCareersPage(db, companyId, r, "agent"),
+    setCompanyVerdict: (companyId: number, verdict: "potential" | "discarded", reason: string) => setCompanyVerdict(db, companyId, verdict, reason, "agent"),
     // Contacts and drafts. The agent can add a verified contact and write a draft; it can never send.
     addContact: (c: { companyId: number; email: string; name?: string; role?: string; sourceUrl: string; personId?: number; verification?: "on_page" | "pattern"; evidence?: { pattern: string; exampleEmail: string; exampleName: string; exampleUrl: string } }) => addContact(db, c, "agent"),
     listContacts: (companyId: number) => listContacts(db, companyId),
@@ -62,7 +68,7 @@ export function createAgentApi(db: DB) {
     upsertCompany: (c: Parameters<typeof upsertCompany>[1]) => upsertCompany(db, c, "agent"),
     upsertSource: (s: Parameters<typeof upsertSource>[1]) => upsertSource(db, s, "agent"),
     recordVerification: (jobId: number, v: Verification) => recordVerification(db, jobId, v, "agent"),
-    setMatch: (jobId: number, score: number, reason: string) => setMatch(db, jobId, score, reason, "agent"),
+    setMatch: (jobId: number, score: number, reason: string, signals?: JobSignals) => setMatch(db, jobId, score, reason, "agent", signals),
     setRoute: (jobId: number, route: "form" | "email" | "none", opts: { requiresSignin?: boolean; applyUrl?: string } = {}) =>
       setRoute(db, jobId, route, opts, "agent"),
     listSources: () => listSources(db),
@@ -128,10 +134,14 @@ export function createHumanApi(db: DB) {
     failSend: (id: number, message: string) => failSend(db, id, message, "human"),
     releaseSend: (id: number) => releaseSend(db, id, "human"),
     applicationsToday: () => applicationsToday(db),
-    listJobs: (state?: JobState) => listJobs(db, { state }),
+    listJobs: (state?: JobState, sort?: "updated" | "priority") => listJobs(db, { state, sort }),
     getJob: (id: number) => getJob(db, id),
     listActionsDetailed: () => listActionsDetailed(db),
     sourceStats: () => sourceStats(db),
+    listDirectory: (f: DirectoryFilter) => listDirectory(db, f),
+    directoryStats: () => directoryStats(db),
+    importDirectory: (rows: DirectoryCompany[]) => importDirectory(db, rows, "human"),
+    setCompanyVerdict: (companyId: number, verdict: Verdict, reason?: string) => setCompanyVerdict(db, companyId, verdict, reason, "human"),
     listSources: () => listSources(db),
     addSource: (s: Parameters<typeof upsertSource>[1]) => upsertSource(db, s, "human"),
     setSourceEnabled: (id: number, enabled: boolean) => setSourceEnabled(db, id, enabled, "human"),

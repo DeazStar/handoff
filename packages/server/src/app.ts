@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { readFileSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
-import { COUNTRIES, EMPLOYMENT_TYPES, FACT_KINDS, defaultVerifyDeps, verifyContact, type VerifyDeps, TransitionError, createHumanApi, orderForCv, type CvPlan, type DB, type JobState } from "@jobhunt/core";
+import { collectYc, runCareerFinder, VERDICTS, type Verdict, COUNTRIES, EMPLOYMENT_TYPES, FACT_KINDS, defaultVerifyDeps, verifyContact, type VerifyDeps, TransitionError, createHumanApi, orderForCv, type CvPlan, type DB, type JobState } from "@jobhunt/core";
 import { renderCvPdf } from "@jobhunt/render";
 import { VaultError, type Vault } from "@jobhunt/vault";
 import { MailError, type Mailer } from "./mail.js";
@@ -113,7 +113,7 @@ const int = (s: string) => {
   return n;
 };
 
-export function createApp(db: DB, opts: { token: string; dataDir: string; vault: Vault; mailer: Mailer; verifyDeps?: VerifyDeps }): Server {
+export function createApp(db: DB, opts: { token: string; dataDir: string; vault: Vault; mailer: Mailer; verifyDeps?: VerifyDeps; collectYc?: typeof collectYc }): Server {
   const vault = opts.vault;
   const mailer = opts.mailer;
   const human = createHumanApi(db);
@@ -136,7 +136,7 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
     return { factId: human.confirmGap(int(m[1]!), { kind, text: String(text ?? ""), dateRange }, b.scope) };
   });
 
-  route("GET", "/api/jobs", (_m, _b, url) => human.listJobs((url.searchParams.get("state") as JobState) ?? undefined));
+  route("GET", "/api/jobs", (_m, _b, url) => human.listJobs((url.searchParams.get("state") as JobState) ?? undefined, "priority"));
   route("GET", "/api/jobs/(\\d+)", (m) => {
     const id = int(m[1]!);
     const detail = human.getJob(id);
@@ -203,10 +203,37 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
       researchMinScore: b.researchMinScore === undefined || b.researchMinScore === "" ? undefined : Number(b.researchMinScore),
       researchScope: b.researchScope,
       consentDefault: b.consentDefault || undefined,
+      priorityMode: b.priorityMode || undefined,
       salaryPeriod: b.salaryPeriod || undefined, // anything but month or year is refused by the core
       batchSize: b.batchSize === undefined || b.batchSize === "" ? undefined : Number(b.batchSize),
       employmentPriority: strings(b.employmentPriority),
     });
+    return { ok: true };
+  });
+  route("GET", "/api/companies", (_m, _b, url) => {
+    const q = url.searchParams;
+    const careers = q.get("careers");
+    return {
+      stats: human.directoryStats(),
+      companies: human.listDirectory({
+        q: q.get("q") ?? undefined,
+        remote: q.get("remote") === "1",
+        careersStatus: careers === "unknown" || careers === "found" || careers === "none" ? careers : undefined,
+        verdict: q.get("verdict") === "unreviewed" || q.get("verdict") === "potential" || q.get("verdict") === "discarded" ? (q.get("verdict") as Verdict) : undefined,
+        limit: 200,
+      }),
+    };
+  });
+  // Downloads Y Combinator's public list of hiring companies (one request to a fixed address) and adds them.
+  route("POST", "/api/companies/collect-yc", async () => {
+    const { companies, rejected } = await (opts.collectYc ?? collectYc)();
+    return { ...human.importDirectory(companies), rejected };
+  });
+  // Looks for career pages with plain code (no model): at most 40 companies per press, a few at a time.
+  route("POST", "/api/companies/find-careers", (_m, b) => runCareerFinder(db, opts.verifyDeps ?? defaultVerifyDeps, { limit: Math.min(Number(b.limit) || 40, 40) }));
+  route("POST", "/api/companies/(\\d+)/verdict", (m, b) => {
+    if (!VERDICTS.includes(b.verdict)) throw new HttpError(400, "verdict must be unreviewed, potential or discarded");
+    human.setCompanyVerdict(int(m[1]!), b.verdict, typeof b.reason === "string" ? b.reason : undefined);
     return { ok: true };
   });
   route("GET", "/api/sources", () => human.listSources());

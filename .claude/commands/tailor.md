@@ -8,9 +8,9 @@ Build tailored CVs using the jobhunt tools. Content and order only: the server d
 ## Which jobs
 Argument given: `$ARGUMENTS`
 - A number: tailor the job with that id, and only that one. Say the job's title and id at the start so the user can see which one you took.
-- `all`: tailor every `matched` job that has no CV document yet, highest score first, **at most `batchSize` in this run** (from `get_preferences`, default 10). Say how many are left.
-- Empty: tailor the highest-scoring `matched` job that has no CV yet.
-- To find candidates call `list_jobs` with state `matched`, then `get_job` for each to see its documents. If there is nothing to do, say so and stop.
+- `all`: tailor every `matched` job that has no CV document yet, in priority order (`list_jobs` with sort `priority`: the order the user chose in the dashboard), **at most `batchSize` in this run** (from `get_preferences`, default 10). Say how many are left.
+- Empty: tailor the first in priority order `matched` job that has no CV yet.
+- To find candidates call `list_jobs` with state `matched` and sort `priority`, then `get_job` for each to see its documents. If there is nothing to do, say so and stop.
 
 Do the steps below once per job, finishing one before starting the next.
 

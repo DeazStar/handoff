@@ -1,3 +1,4 @@
+import { REMOTE_SCOPES, SPONSORSHIPS, type RemoteScope, type Sponsorship } from "./priority.js";
 import type { DB } from "./db.js";
 import { addCandidateJob, findExistingJob, logEvent, transitionJob, type NewJob } from "./jobs.js";
 import { queueAction } from "./actionQueue.js";
@@ -92,9 +93,22 @@ export function recordVerification(
 }
 
 /** Scores a verified job (0 to 10) with a reason, and moves it to matched. Re-scoring a matched job just updates the score. */
-export function setMatch(db: DB, jobId: number, score: number, reason: string, actor: Actor): JobState {
+export interface JobSignals {
+  remoteScope?: RemoteScope;
+  sponsorship?: Sponsorship;
+  /** The posting's own words, or the register that lists the company. Required with confirmed or likely. */
+  sponsorshipEvidence?: string;
+}
+
+export function setMatch(db: DB, jobId: number, score: number, reason: string, actor: Actor, signals: JobSignals = {}): JobState {
   if (!Number.isFinite(score) || score < 0 || score > 10) throw new Error("score must be between 0 and 10");
   if (!reason.trim()) throw new Error("A match needs a reason");
+  if (signals.remoteScope !== undefined && !REMOTE_SCOPES.includes(signals.remoteScope)) throw new Error("remoteScope must be worldwide, open_to_me, closed or unclear");
+  if (signals.sponsorship !== undefined && !SPONSORSHIPS.includes(signals.sponsorship)) throw new Error("sponsorship must be confirmed, likely or unknown");
+  const evidence = signals.sponsorshipEvidence?.trim().slice(0, 500);
+  if ((signals.sponsorship === "confirmed" || signals.sponsorship === "likely") && !evidence) {
+    throw new Error("Say where the sponsorship signal comes from: quote the posting, or name the register");
+  }
   return db.transaction(() => {
     const job = db.prepare("SELECT state FROM jobs WHERE id = ?").get(jobId) as { state: JobState } | undefined;
     if (!job) throw new Error(`Job ${jobId} not found`);
@@ -106,7 +120,11 @@ export function setMatch(db: DB, jobId: number, score: number, reason: string, a
       reason.trim(),
       jobId,
     );
-    logEvent(db, actor, "match_set", jobId, { score });
+    if (signals.remoteScope !== undefined) db.prepare("UPDATE jobs SET remote_scope = ? WHERE id = ?").run(signals.remoteScope, jobId);
+    if (signals.sponsorship !== undefined) {
+      db.prepare("UPDATE jobs SET sponsorship = ?, sponsorship_evidence = ? WHERE id = ?").run(signals.sponsorship, signals.sponsorship === "unknown" ? null : evidence, jobId);
+    }
+    logEvent(db, actor, "match_set", jobId, { score, ...signals });
     if (job.state === "verified_live") transitionJob(db, jobId, "matched", actor, `match ${score}/10`);
     return "matched" as JobState;
   })();
