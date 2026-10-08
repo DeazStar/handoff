@@ -9,7 +9,7 @@ const EMAIL = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/;
 const CONTROL = /[\r\n\0]/;
 const MAX_SUBJECT = 200;
 const MAX_BODY = 20_000;
-const FREE_MAIL = new Set(["gmail.com", "googlemail.com", "yahoo.com", "outlook.com", "hotmail.com", "live.com", "icloud.com", "proton.me", "protonmail.com", "aol.com", "gmx.com", "mail.com"]);
+export const FREE_MAIL = new Set(["gmail.com", "googlemail.com", "yahoo.com", "outlook.com", "hotmail.com", "live.com", "icloud.com", "proton.me", "protonmail.com", "aol.com", "gmx.com", "mail.com"]);
 
 // ---------- contacts ----------
 
@@ -28,6 +28,8 @@ export interface Contact {
   verification: "on_page" | "pattern" | "user";
   /** For pattern contacts: the real address, its owner and the page that the derivation rests on. */
   evidence?: { pattern: string; exampleEmail: string; exampleName: string; exampleUrl: string };
+  /** The server could not open the page; the agent read it in a real browser and quoted the line with the address. */
+  browserEvidence?: { quote: string; pageUrl: string };
 }
 
 const toContact = (r: any): Contact => ({
@@ -42,7 +44,8 @@ const toContact = (r: any): Contact => ({
   verifiedAt: r.verified_at ?? undefined,
   personId: r.person_id ?? undefined,
   verification: r.verification,
-  evidence: r.evidence ? JSON.parse(r.evidence) : undefined,
+  evidence: r.evidence && JSON.parse(r.evidence).pattern ? JSON.parse(r.evidence) : undefined,
+  browserEvidence: r.evidence && JSON.parse(r.evidence).browser ? JSON.parse(r.evidence).browser : undefined,
 });
 
 /**
@@ -51,7 +54,7 @@ const toContact = (r: any): Contact => ({
  */
 export function addContact(
   db: DB,
-  c: { companyId: number; email: string; name?: string; role?: string; sourceUrl?: string; personId?: number; verification?: "on_page" | "pattern"; evidence?: Contact["evidence"] },
+  c: { companyId: number; email: string; name?: string; role?: string; sourceUrl?: string; personId?: number; verification?: "on_page" | "pattern"; evidence?: Contact["evidence"]; browserEvidence?: { quote: string; pageUrl: string } },
   actor: Actor,
 ): number {
   const email = c.email.trim().toLowerCase();
@@ -69,7 +72,7 @@ export function addContact(
   const verification = actor === "human" ? "user" : (c.verification ?? "on_page");
   const info = db
     .prepare("INSERT INTO contacts (company_id, name, email, role, source_url, added_by, verified_at, person_id, verification, evidence) VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)")
-    .run(c.companyId, c.name?.trim() || null, email, c.role?.trim() || null, source, actor === "human" ? "user" : "agent", c.personId ?? null, verification, c.evidence ? JSON.stringify(c.evidence) : null);
+    .run(c.companyId, c.name?.trim() || null, email, c.role?.trim() || null, source, actor === "human" ? "user" : "agent", c.personId ?? null, verification, c.evidence ? JSON.stringify(c.evidence) : c.browserEvidence ? JSON.stringify({ browser: c.browserEvidence }) : null);
   const id = Number(info.lastInsertRowid);
   logEvent(db, actor, "contact_added", null, { id, companyId: c.companyId });
   return id;
@@ -172,6 +175,10 @@ export interface EmailDetail {
   attachment?: { documentId: number; version: number };
   /** The cover letter PDF sent with the CV, when there is one. */
   coverAttachment?: { documentId: number; version: number };
+  /** application: the email that applies. follow_up: a reminder in the same thread, with nothing attached. */
+  kind: "application" | "follow_up";
+  /** For a follow-up: the Message-ID of the email it continues. */
+  inReplyTo?: string;
   status: "draft" | "sending" | "sent" | "failed" | "discarded";
   error?: string;
   messageId?: string;
@@ -222,6 +229,8 @@ export function getEmail(db: DB, id: number): EmailDetail | null {
     edited: r.body_text !== null,
     attachment: att ? { documentId: att.id, version: att.version } : undefined,
     coverAttachment: cov ? { documentId: cov.id, version: cov.version } : undefined,
+    kind: r.kind,
+    inReplyTo: r.in_reply_to ?? undefined,
     status: r.status,
     error: r.error ?? undefined,
     messageId: r.message_id ?? undefined,
@@ -260,7 +269,7 @@ export function discardEmail(db: DB, id: number, actor: Actor): void {
     db.prepare("UPDATE emails SET status = 'discarded', updated_at = datetime('now') WHERE id = ?").run(id);
     db.prepare("UPDATE action_queue SET status = 'dismissed', resolved_at = datetime('now') WHERE kind = 'approve_email' AND status = 'open' AND json_extract(payload, '$.emailId') = ?").run(id);
     const job = db.prepare("SELECT state FROM jobs WHERE id = ?").get(email.jobId) as { state: JobState };
-    if (job.state === "awaiting_approval") transitionJob(db, email.jobId, "materials_ready", actor, "email draft discarded");
+    if (email.kind === "application" && job.state === "awaiting_approval") transitionJob(db, email.jobId, "materials_ready", actor, "email draft discarded");
     logEvent(db, actor, "email_discarded", email.jobId, { id });
   })();
 }
@@ -292,14 +301,17 @@ export function finishSend(db: DB, id: number, messageId: string, actor: Actor):
     const email = getEmail(db, id);
     if (!email || email.status !== "sending") throw new Error("This email is not being sent");
     db.prepare("UPDATE emails SET status = 'sent', message_id = ?, sent_at = datetime('now'), error = NULL, updated_at = datetime('now') WHERE id = ?").run(messageId, id);
-    db.prepare(
-      `INSERT INTO applications (job_id, route, prepared_at, approved_at, sent_at, status) VALUES (?, 'email', ?, datetime('now'), datetime('now'), 'submitted')
-       ON CONFLICT(job_id) DO UPDATE SET route = 'email', approved_at = datetime('now'), sent_at = datetime('now'), status = 'submitted'`,
-    ).run(email.jobId, email.createdAt);
+    // A follow-up is not a new application: it must not reset the application's sent date or count toward the day's limit.
+    if (email.kind === "application") {
+      db.prepare(
+        `INSERT INTO applications (job_id, route, prepared_at, approved_at, sent_at, status) VALUES (?, 'email', ?, datetime('now'), datetime('now'), 'submitted')
+         ON CONFLICT(job_id) DO UPDATE SET route = 'email', approved_at = datetime('now'), sent_at = datetime('now'), status = 'submitted'`,
+      ).run(email.jobId, email.createdAt);
+    }
     db.prepare("UPDATE action_queue SET status = 'done', resolved_at = datetime('now') WHERE kind = 'approve_email' AND status = 'open' AND json_extract(payload, '$.emailId') = ?").run(id);
     const job = db.prepare("SELECT state FROM jobs WHERE id = ?").get(email.jobId) as { state: JobState };
-    if (job.state === "awaiting_approval") transitionJob(db, email.jobId, "applied", actor, "email sent");
-    logEvent(db, actor, "email_sent", email.jobId, { id });
+    if (email.kind === "application" && job.state === "awaiting_approval") transitionJob(db, email.jobId, "applied", actor, "email sent");
+    logEvent(db, actor, email.kind === "follow_up" ? "follow_up_sent" : "email_sent", email.jobId, { id });
   })();
 }
 

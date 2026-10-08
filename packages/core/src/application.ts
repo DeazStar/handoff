@@ -98,7 +98,7 @@ export function listApplications(db: DB, status?: string): ApplicationRow[] {
 /** Prepared forms waiting for the user, plus today's submissions, against the user's daily limit. */
 function capUsed(db: DB): number {
   const waiting = (db.prepare("SELECT COUNT(*) AS n FROM applications WHERE status = 'prepared'").get() as { n: number }).n;
-  const waitingEmails = (db.prepare("SELECT COUNT(*) AS n FROM emails WHERE status IN ('draft','sending','failed')").get() as { n: number }).n;
+  const waitingEmails = (db.prepare("SELECT COUNT(*) AS n FROM emails WHERE kind = 'application' AND status IN ('draft','sending','failed')").get() as { n: number }).n;
   return applicationsToday(db) + waiting + waitingEmails;
 }
 

@@ -25,6 +25,9 @@ export interface OutgoingMail {
   /** Defaults to the sending address. */
   replyTo?: string;
   bcc?: string[];
+  /** Message-IDs (with angle brackets) of the email this one continues, so it joins the same thread. */
+  inReplyTo?: string;
+  references?: string[];
   attachments?: { filename: string; content: Buffer }[];
 }
 
@@ -62,6 +65,9 @@ function checkMail(m: OutgoingMail) {
   (m.bcc ?? []).forEach((b) => checkAddress(b, "A BCC address"));
   if ((m.bcc?.length ?? 0) > 3) throw new MailError("invalid", "At most 3 BCC addresses");
   if (m.replyTo) checkAddress(m.replyTo, "The reply-to address");
+  for (const id of [m.inReplyTo, ...(m.references ?? [])].filter(Boolean) as string[]) {
+    if (!/^<[^<>\s\0]{3,200}>$/.test(id)) throw new MailError("invalid", "A thread reference is not a valid message id");
+  }
   // A newline in a header value would let text smuggle in extra headers or recipients.
   if (!m.subject.trim() || m.subject.length > MAX_SUBJECT || CONTROL.test(m.subject)) throw new MailError("invalid", `The subject must be one line of up to ${MAX_SUBJECT} characters`);
   if (m.fromName && (CONTROL.test(m.fromName) || m.fromName.length > 100)) throw new MailError("invalid", "The sender name is not valid");
@@ -129,6 +135,8 @@ export function createMailer(vault: Vault, opts: MailerOptions = {}): Mailer {
               to: mail.to,
               replyTo: mail.replyTo ?? login.user,
               bcc: mail.bcc,
+              inReplyTo: mail.inReplyTo,
+              references: mail.references,
               subject: mail.subject,
               text: mail.text,
               attachments: mail.attachments?.map((a) => ({ filename: safeName(a.filename), content: a.content, contentType: "application/pdf" })),

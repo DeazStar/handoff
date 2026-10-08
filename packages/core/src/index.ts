@@ -12,7 +12,7 @@ export { addFact, updateFact, deleteFact, makeFactGeneral, listFacts, getFacts, 
 export { saveDocument, deleteDocument, getDocument, listDocuments, checkProvenance, numberTokens, ProvenanceError, type Block, type NewDocument, type SavedDocument } from "./documents.js";
 export { listJobs, getJob, listActionsDetailed, sourceStats, type JobRow, type JobDetail, type ActionDetail } from "./queries.js";
 export { resolveDataPaths } from "./paths.js";
-export { upsertCompany, upsertSource, recordVerification, setMatch, setRoute, checkCandidate, logSkippedCandidate, SKIP_REASONS, BudgetError, addCandidateJobWithinBudget, listSources, setSourceEnabled, discoveryBudget, type Verification, type SourceRow } from "./agentOps.js";
+export { upsertCompany, upsertSource, recordVerification, setMatch, setRoute, checkCandidate, logSkippedCandidate, SKIP_REASONS, BudgetError, addCandidateJobWithinBudget, userLinkBudget, checkLinks, type LinkCheck, listSources, setSourceEnabled, discoveryBudget, type Verification, type SourceRow } from "./agentOps.js";
 export {
   ENTRY_KINDS, ENTRY_WEIGHTS, EMPLOYMENT_TYPES, listEntries, getEntry, addEntry, updateEntry, moveEntry, deleteEntry, addBullet, setSkillGroup,
   getCvMaterial, importCv,
@@ -41,3 +41,5 @@ export { collectYc, mapYcCompany, YC_HIRING_URL } from "./yc.js";
 export { findCareersLink, findCareersPage, runCareerFinder, setCareersPage, looksScripted, type CareersOutcome, type FinderResult } from "./careers.js";
 export { PROFILE_FIELDS, checkProfileAnswer, checkStandardAnswer, resolveSources, checkObserved, type CheckResult, type Check, type ProfileField } from "./answerCheck.js";
 export { prepareCover, coverMode, latestCover, coverText, getCoverMaterial, CoverProblems, COVER_LIMITS, type CoverPlan, type ResolvedCover } from "./cover.js";
+export { classifyMessage, matchMessage, ingestMessages, listMessages, newMessageCount, setMessageStatus, setMessageCategory, applyMessageOutcome, purgeOldSnippets, getSyncState, recordSync, dueFollowUps, scanFollowUps, draftFollowUp, getSyncTargets, CATEGORIES, type InboundMessage, type MessageRow, type Category, type MessageStatus, type IngestResult, type DueFollowUp, type ScanResult, type SyncState, type SyncTargets } from "./replies.js";
+export { verifyContactFromBrowser, MAX_BROWSER_QUOTE } from "./contactVerify.js";

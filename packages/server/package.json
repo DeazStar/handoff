@@ -16,9 +16,12 @@
     "@jobhunt/core": "*",
     "@jobhunt/render": "*",
     "@jobhunt/vault": "*",
+    "imapflow": "^2.2.7",
+    "mailparser": "^3.9.36",
     "nodemailer": "^10.0.14"
   },
   "devDependencies": {
+    "@types/mailparser": "^3.9.0",
     "@types/node": "^20.14.0",
     "@types/nodemailer": "^8.0.2",
     "typescript": "^5.5.0",

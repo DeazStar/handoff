@@ -17,6 +17,8 @@ export interface NewJob {
   postedBy?: string;
   /** Where to apply, if different from the posting page. */
   applyUrl?: string;
+  /** The user gave this link themselves. Such jobs do not use the discovery limit. */
+  userProvided?: boolean;
 }
 
 export const MAX_DESCRIPTION = 60_000;
@@ -57,8 +59,8 @@ export function addCandidateJob(db: DB, job: NewJob, actor: Actor = "agent"): { 
   if (existing !== undefined) return { id: existing, created: false };
   const info = db
     .prepare(
-      `INSERT INTO jobs (company_id, source_id, title, url, canonical_url, location, remote, posted_at, description_hash, description, posted_by, apply_url, details_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO jobs (company_id, source_id, title, url, canonical_url, location, remote, posted_at, description_hash, description, posted_by, apply_url, details_at, user_provided)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       job.companyId ?? null,
@@ -74,9 +76,10 @@ export function addCandidateJob(db: DB, job: NewJob, actor: Actor = "agent"): { 
       job.postedBy?.trim().slice(0, 200) || null,
       job.applyUrl?.trim() || null,
       job.description?.trim() ? new Date().toISOString().slice(0, 19).replace("T", " ") : null,
+      job.userProvided ? 1 : 0,
     );
   const id = Number(info.lastInsertRowid);
-  logEvent(db, actor, "job_added", id, { url: job.url });
+  logEvent(db, actor, "job_added", id, { url: job.url, ...(job.userProvided ? { userProvided: true } : {}) });
   return { id, created: true };
 }
 

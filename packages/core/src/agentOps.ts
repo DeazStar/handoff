@@ -160,9 +160,16 @@ export function discoveryBudget(db: DB): { limit: number; addedToday: number; re
     (db.prepare("SELECT daily_discovery_limit AS n FROM preferences WHERE id = 1").get() as { n: number } | undefined)?.n ?? 10;
   const addedToday = (
     db
-      .prepare("SELECT COUNT(*) AS n FROM jobs WHERE date(found_at, 'localtime') = date('now', 'localtime')")
+      .prepare("SELECT COUNT(*) AS n FROM jobs WHERE user_provided = 0 AND date(found_at, 'localtime') = date('now', 'localtime')")
       .get() as { n: number }
   ).n;
+  return { limit, addedToday, remaining: Math.max(0, limit - addedToday) };
+}
+
+/** Links the user gave: they do not use the discovery limit, but one day's worth is capped at the batch size. */
+export function userLinkBudget(db: DB): { limit: number; addedToday: number; remaining: number } {
+  const limit = (db.prepare("SELECT batch_size AS n FROM preferences WHERE id = 1").get() as { n: number } | undefined)?.n ?? 10;
+  const addedToday = (db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE user_provided = 1 AND date(found_at, 'localtime') = date('now', 'localtime')").get() as { n: number }).n;
   return { limit, addedToday, remaining: Math.max(0, limit - addedToday) };
 }
 
@@ -199,6 +206,13 @@ export class BudgetError extends Error {}
  */
 export function addCandidateJobWithinBudget(db: DB, job: NewJob, actor: Actor): { id: number; created: boolean } {
   return db.transaction(() => {
+    if (job.userProvided) {
+      const own = userLinkBudget(db);
+      if (own.remaining === 0 && findExistingJob(db, job) === undefined) {
+        throw new BudgetError(`Links you were given are capped at ${own.limit} a day (the batch size in Settings) and ${own.addedToday} were added today. Add the rest tomorrow, or raise the batch size.`);
+      }
+      return addCandidateJob(db, job, actor);
+    }
     const budget = discoveryBudget(db);
     if (budget.remaining === 0 && findExistingJob(db, job) === undefined) {
       throw new BudgetError(
@@ -246,4 +260,31 @@ export function checkCandidate(db: DB, url: string): CandidateStatus {
     | undefined;
   if (k) return { known: "skipped", reason: k.reason, detail: k.detail ?? undefined, at: k.at, canonicalUrl };
   return { known: null, canonicalUrl };
+}
+
+export interface LinkCheck {
+  url: string;
+  /** False when it is not a web link. */
+  ok: boolean;
+  canonicalUrl?: string;
+  /** job: already in the pipeline. skipped: rejected before. new: not seen. */
+  known?: "job" | "skipped" | "new";
+  jobId?: number;
+  state?: JobState;
+}
+
+/** For a pasted list of links: which are new and which are already known. Opens nothing. */
+export function checkLinks(db: DB, urls: string[]): LinkCheck[] {
+  const seen = new Set<string>();
+  return urls.slice(0, 50).map((raw): LinkCheck => {
+    const url = raw.trim();
+    if (!/^https?:\/\//i.test(url)) return { url, ok: false };
+    let c;
+    try { c = checkCandidate(db, url); } catch { return { url, ok: false }; }
+    if (seen.has(c.canonicalUrl)) return { url, ok: true, canonicalUrl: c.canonicalUrl, known: "job" };
+    seen.add(c.canonicalUrl);
+    if (c.known === "job") return { url, ok: true, canonicalUrl: c.canonicalUrl, known: "job", jobId: c.jobId, state: c.state };
+    if (c.known === "skipped") return { url, ok: true, canonicalUrl: c.canonicalUrl, known: "skipped" };
+    return { url, ok: true, canonicalUrl: c.canonicalUrl, known: "new" };
+  });
 }

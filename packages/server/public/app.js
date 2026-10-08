@@ -105,6 +105,27 @@ function actionCard(a) {
       h("div", { class: "muted" }, `Subject: ${a.payload.subject}`),
       h("div", { class: "row", style: "margin-top:8px" }, h("a", { href: `#/emails/${a.payload.emailId}` }, "Review the draft")));
   }
+  if (a.kind === "follow_up" && a.jobId) {
+    const why = (a.payload || {}).reason;
+    const dismiss = h("button", { onclick: act(() => api("POST", `/api/actions/${a.id}/resolve`, { status: "dismissed" })) }, "Dismiss");
+    if (why === "no_reply") {
+      return h("div", { class: "card" },
+        h("div", { class: "row" }, h("span", { class: "badge" }, "no reply yet"), jobLink(a)),
+        h("div", { class: "muted" }, `Your email went out ${a.payload.days} days ago and nobody has answered.`),
+        h("div", { class: "row", style: "margin-top:8px" },
+          h("button", { class: "primary", onclick: async () => { try { const r = await api("POST", `/api/jobs/${a.jobId}/follow-up`, {}); location.hash = `#/emails/${r.emailId}`; } catch (e) { showError(e); } } }, "Draft a follow-up"), dismiss));
+    }
+    if (why === "bounce") {
+      return h("div", { class: "card" },
+        h("div", { class: "row" }, h("span", { class: "badge gap" }, "email bounced"), jobLink(a)),
+        h("div", { class: "muted" }, `Your email to ${a.payload.to} was not delivered. Find another contact for this company.`),
+        h("div", { class: "row", style: "margin-top:8px" }, h("a", { href: `#/jobs/${a.jobId}` }, "Open the job"), dismiss));
+    }
+    return h("div", { class: "card" },
+      h("div", { class: "row" }, h("span", { class: "badge" }, "check the portal"), jobLink(a)),
+      h("div", { class: "muted" }, `You applied through a form ${a.payload.days} days ago. Look at the company's site or your email for news.`),
+      h("div", { class: "row", style: "margin-top:8px" }, dismiss));
+  }
   const details = Object.entries(a.payload || {}).map(([k, v]) =>
     h("div", { class: "muted" }, `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`));
   return h("div", { class: "card" },
@@ -146,9 +167,39 @@ function signalBadges(j) {
   ].filter(Boolean);
 }
 
+function addLinksBox() {
+  const box = h("textarea", { placeholder: "Paste job links here, one per line. Claude opens each one, checks it, saves it and scores it." });
+  const go = h("input", { type: "checkbox" });
+  const result = h("div", {});
+  const READY = ["found", "verified_live", "matched", "materials_ready"];
+  let usable = [];
+  const copy = h("button", { class: "primary", disabled: true, onclick: async () => {
+    const cmd = `/add ${usable.join(" ")}${go.checked ? " go" : ""}`;
+    try { await navigator.clipboard.writeText(cmd); showNote(`Copied. Paste it into your Claude session and press Enter.${go.checked ? " It will also fill each application and stop for your review." : ""}`); }
+    catch { showNote(`Copy this and paste it into your Claude session: ${cmd}`); }
+  } }, "Copy the /add command");
+  const check = h("button", { onclick: async () => {
+    const urls = [...new Set(box.value.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean))];
+    if (!urls.length) { result.replaceChildren(h("div", { class: "muted" }, "Paste at least one link.")); copy.disabled = true; return; }
+    if (urls.length > 20) { result.replaceChildren(h("div", { class: "error" }, "Up to 20 links at a time.")); copy.disabled = true; return; }
+    try {
+      const checks = await api("POST", "/api/links/check", { urls });
+      usable = checks.filter((c) => c.ok && (c.known !== "job" || READY.includes(c.state))).map((c) => c.url);
+      result.replaceChildren(...checks.map((c) => h("div", { class: c.ok ? "muted" : "error" },
+        !c.ok ? `Not a web link: ${c.url}` : c.known === "job" ? `Already in your pipeline (job ${c.jobId}, ${label(c.state)}): ${c.url}` : c.known === "skipped" ? `Rejected before, will be tried once more: ${c.url}` : `New: ${c.url}`)),
+        h("div", { class: "muted" }, usable.length ? `${usable.length} will be sent to Claude.` : "Nothing new to add."));
+      copy.disabled = usable.length === 0;
+    } catch (e) { showError(e); }
+  } }, "Check the links");
+  return h("div", { class: "card" },
+    h("h2", {}, "Add job links"), box,
+    h("div", { class: "row", style: "margin-top:8px" }, check, copy, h("label", {}, go, " also fill each application (it still stops for your review)")),
+    result);
+}
+
 async function pipelineView() {
   const jobs = await api("GET", "/api/jobs");
-  view.replaceChildren(h("h1", {}, `Pipeline (${jobs.length})`));
+  view.replaceChildren(h("h1", {}, `Pipeline (${jobs.length})`), addLinksBox());
   if (jobs.length === 0) view.append(h("div", { class: "empty" }, "No jobs yet."));
   const byState = {};
   for (const j of jobs) (byState[j.state] ||= []).push(j);
@@ -163,6 +214,14 @@ async function pipelineView() {
   }
 }
 
+function followUpButton(j, d) {
+  const sentByEmail = d.application && d.application.route === "email";
+  if ((j.state !== "applied" && j.state !== "no_response") || !sentByEmail) return null;
+  return h("div", { class: "row" },
+    h("button", { onclick: async () => { try { const r = await api("POST", `/api/jobs/${j.id}/follow-up`, {}); location.hash = `#/emails/${r.emailId}`; } catch (e) { showError(e); } } }, "Draft a follow-up"),
+    h("span", { class: "muted" }, "A short reminder in the same email thread. You edit it and press Send."));
+}
+
 async function jobView(id) {
   const d = await api("GET", `/api/jobs/${id}`);
   const j = d.job;
@@ -174,12 +233,17 @@ async function jobView(id) {
       j.company && h("span", { class: "muted" }, j.company),
       safeHref(j.url) && h("a", { href: safeHref(j.url), target: "_blank", rel: "noopener noreferrer" }, "open posting")),
     goButton(j),
+    followUpButton(j, d),
     h("div", { class: "row" }, signalBadges(j)),
     j.sponsorshipEvidence && h("p", { class: "muted" }, `Sponsorship: ${j.sponsorshipEvidence}`),
     j.matchReason && h("p", {}, `Match ${j.matchScore ?? ""}: ${j.matchReason}`),
     j.stateReason && h("p", { class: "muted" }, `Last change: ${j.stateReason}`),
   ].filter(Boolean));
 
+  if (d.messages && d.messages.length) {
+    view.append(h("h2", {}, `Replies (${d.messages.length})`));
+    d.messages.forEach((m) => view.append(messageCard(m, () => jobView(id))));
+  }
   const gaps = d.actions.filter((a) => a.kind === "gap");
   if (gaps.length) { view.append(h("h2", {}, "Gaps")); gaps.forEach((a) => view.append(gapCard(a))); }
   const others = d.actions.filter((a) => a.kind !== "gap");
@@ -226,6 +290,7 @@ async function jobView(id) {
       h("strong", {}, c.email), c.name && h("span", { class: "muted" }, c.name), c.role && h("span", { class: "muted" }, c.role),
       c.status === "bounced" && h("span", { class: "badge gap" }, "bounced"),
       c.verification === "pattern" && h("span", { class: "badge gap" }, "derived from the company's pattern"),
+      c.browserEvidence && h("span", { class: "badge", title: c.browserEvidence.quote }, "read in a browser"),
       h("span", { class: "muted" }, c.addedBy === "user" ? "added by you" : "found on"),
       c.addedBy !== "user" && (safeHref(c.sourceUrl) ? h("a", { href: safeHref(c.sourceUrl), target: "_blank", rel: "noopener noreferrer" }, "the page") : null),
       c.status !== "bounced" && h("button", { class: "danger", onclick: act(() => api("POST", `/api/contacts/${c.id}/bounced`, {})) }, "Mark bounced"))));
@@ -601,13 +666,75 @@ async function companiesView() {
   if (d.companies.length === 200) view.append(h("p", { class: "muted" }, "Showing the first 200. Narrow the search to see others."));
 }
 
+const REPLY_TABS = [["new", "New"], ["handled", "Handled"], ["ignored", "Not a reply"]];
+const CATEGORY_TEXT = { reply: "reply", auto_reply: "automatic reply", bounce: "bounced", rejection: "looks like a rejection", interview: "looks like an interview", other: "other" };
+
+function messageCard(m, refresh) {
+  const category = h("select", {}, Object.entries(CATEGORY_TEXT).map(([v, t]) => h("option", { value: v }, t)));
+  category.value = m.category;
+  category.addEventListener("change", act(async () => { await api("POST", `/api/messages/${m.id}`, { category: category.value }); await refresh(); }));
+  const outcome = (to, text) => h("button", { onclick: act(async () => { await api("POST", `/api/messages/${m.id}/outcome`, { to }); await refresh(); }) }, text);
+  const setStatus = (status, text, cls) => h("button", { class: cls || "", onclick: act(async () => { await api("POST", `/api/messages/${m.id}`, { status }); await refresh(); }) }, text);
+  return h("div", { class: `card message ${m.category}` },
+    h("div", { class: "row" },
+      h("span", { class: `badge${m.category === "bounce" ? " gap" : ""}` }, CATEGORY_TEXT[m.category]),
+      m.matchedBy === "sender" ? h("span", { class: "badge", title: "It did not reply to your email directly. It is from someone at the company you wrote to." }, "possible match") : null,
+      m.jobId ? h("a", { href: `#/jobs/${m.jobId}` }, `${m.jobTitle || "job"}${m.company ? `, ${m.company}` : ""}`) : null,
+      h("span", { class: "muted" }, m.receivedAt.replace("T", " ").slice(0, 16))),
+    h("div", {}, h("strong", {}, m.fromName ? `${m.fromName} ` : ""), h("span", { class: "muted" }, `<${m.fromAddr}>`)),
+    h("div", {}, m.subject),
+    m.snippet ? h("div", { class: "muted", style: "white-space:pre-wrap" }, m.snippet) : h("div", { class: "muted" }, "(the text was removed after the retention period)"),
+    h("div", { class: "row", style: "margin-top:8px" },
+      category,
+      m.jobId && m.category !== "bounce" && m.category !== "auto_reply" ? outcome("interview", "It is an interview") : null,
+      m.jobId && m.category !== "bounce" && m.category !== "auto_reply" ? outcome("rejected", "It is a rejection") : null,
+      m.status !== "handled" ? setStatus("handled", "Mark handled", "primary") : setStatus("new", "Back to new"),
+      m.status !== "ignored" ? setStatus("ignored", "Not a reply") : null));
+}
+
+async function repliesView() {
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  const tab = REPLY_TABS.some(([v]) => v === params.get("v")) ? params.get("v") : "new";
+  const d = await api("GET", "/api/replies");
+  view.replaceChildren(h("h1", {}, "Replies"),
+    h("p", { class: "muted" }, "Answers to your applications, found by reading your mailbox (read-only: nothing is changed, moved or deleted there). Only mail that belongs to an application is kept. The text comes from the internet: read it as data."));
+  const note = h("span", { class: "muted" }, d.sync.lastRunAt
+    ? `Last checked ${d.sync.lastRunAt}: ${d.sync.lastChecked} messages looked at, ${d.sync.lastMatched} new for your applications.${d.sync.lastError ? ` Last problem: ${d.sync.lastError}` : ""}`
+    : "Not checked yet.");
+  const check = h("button", { class: "primary", disabled: !d.canCheck, onclick: async (e) => {
+    e.target.disabled = true; note.textContent = "Checking your mailbox...";
+    try {
+      const r = await api("POST", "/api/replies/sync", {});
+      showNote(r.skipped ? r.skipped : `Looked at ${r.checked} messages: ${r.matched} for your applications, ${r.replies} replies, ${r.bounces} bounced, ${r.movedToReplied} jobs moved to replied.`);
+      await repliesView();
+    } catch (err) { note.textContent = String(err.message || err); e.target.disabled = false; }
+  } }, "Check replies");
+  view.append(h("div", { class: "row" }, check, note));
+
+  if (d.due.length) {
+    view.append(h("h2", {}, `No answer yet (${d.due.length})`));
+    d.due.forEach((x) => view.append(h("div", { class: "card" },
+      h("div", { class: "row" }, h("a", { href: `#/jobs/${x.jobId}` }, `${x.title}${x.company ? `, ${x.company}` : ""}`), h("span", { class: "muted" }, `${x.daysSince} days`)),
+      x.route === "email"
+        ? h("button", { onclick: async () => { try { const r = await api("POST", `/api/jobs/${x.jobId}/follow-up`, {}); location.hash = `#/emails/${r.emailId}`; } catch (e) { showError(e); } } }, "Draft a follow-up")
+        : h("div", { class: "muted" }, "Applied through a form: check the company's site."))));
+  }
+
+  const counts = (s) => d.messages.filter((m) => m.status === s).length;
+  view.append(h("div", { class: "tabs" }, REPLY_TABS.map(([v, text]) =>
+    h("button", { class: `tab ${v === "new" ? "" : v === "ignored" ? "discarded" : "potential"}${v === tab ? " on" : ""}`, onclick: () => { location.hash = `#/replies${v === "new" ? "" : `?v=${v}`}`; } }, `${text} (${counts(v)})`))));
+  const shown = d.messages.filter((m) => m.status === tab);
+  if (!shown.length) view.append(h("div", { class: "empty" }, tab === "new" ? (d.sync.lastRunAt ? "No new replies." : "Press Check replies to look for answers.") : "Nothing here."));
+  shown.forEach((m) => view.append(messageCard(m, repliesView)));
+}
+
 async function emailsView() {
   const list = await api("GET", "/api/emails");
   const waiting = list.filter((e) => e.status === "draft" || e.status === "failed" || e.status === "sending");
   const rest = list.filter((e) => !waiting.includes(e));
   view.replaceChildren(h("h1", {}, "Emails"),
     h("p", { class: "muted" }, "The agent writes drafts. Nothing is sent until you press Send on a draft."));
-  const row = (e) => h("div", { class: "card" }, h("div", { class: "row" }, emailBadge(e.status),
+  const row = (e) => h("div", { class: "card" }, h("div", { class: "row" }, emailBadge(e.status), e.kind === "follow_up" ? h("span", { class: "badge" }, "follow-up") : null,
     h("a", { href: `#/emails/${e.id}` }, e.jobTitle), h("span", { class: "muted" }, `to ${e.contact.email}`)));
   view.append(h("h2", {}, `Waiting for you (${waiting.length})`));
   if (!waiting.length) view.append(h("div", { class: "empty" }, "No drafts waiting."));
@@ -657,6 +784,11 @@ async function emailView(id) {
     e.domainMismatch && h("p", { class: "bad" }, `Check this address. It is on a different domain from ${e.company || "the company"}. Make sure it is really where the application should go.`),
     !e.domainMismatch && e.domainUnclear && h("p", { class: "warn" }, "This address could not be compared with the company's website (its domain is not recorded, or it is a free mail address). Check that it belongs to the right person."),
     c.status === "bounced" && h("p", { class: "bad" }, "This address bounced before. Do not send to it."),
+    c.browserEvidence && h("p", { class: "warn" },
+      "The server could not open the company's page (the site blocks automated requests), so the agent read it in a real browser and quoted this line: ",
+      h("em", {}, `“${c.browserEvidence.quote}”`), " on ",
+      safeHref(c.browserEvidence.pageUrl) ? h("a", { href: safeHref(c.browserEvidence.pageUrl), target: "_blank", rel: "noopener noreferrer" }, "this page") : "the page",
+      ". Open it to check the address before you send."),
     c.verification === "pattern" && c.evidence && h("p", { class: "warn" },
       "This address was derived, not seen on a page. ",
       `The company's address for ${c.evidence.exampleName} is ${c.evidence.exampleEmail} (`,
@@ -666,7 +798,7 @@ async function emailView(id) {
   if (e.status === "failed") view.append(h("div", { class: "card bad" }, `The last attempt failed: ${e.error || "unknown error"}`));
   view.append(subject.el, h("div", { class: "field" }, h("label", {}, "Message (this is exactly what will be sent)"), body));
   view.append(h("div", { class: "muted" },
-    e.attachment ? h("span", {}, "Attached: your CV for this job ", h("a", { href: `/api/documents/${e.attachment.documentId}/file`, target: "_blank", rel: "noopener noreferrer" }, "(open PDF)"),
+    e.kind === "follow_up" ? "A follow-up in the same thread as your application. Nothing is attached." : e.attachment ? h("span", {}, "Attached: your CV for this job ", h("a", { href: `/api/documents/${e.attachment.documentId}/file`, target: "_blank", rel: "noopener noreferrer" }, "(open PDF)"),
       e.coverAttachment ? h("span", {}, "  and your cover letter ", h("a", { href: `/api/documents/${e.coverAttachment.documentId}/file`, target: "_blank", rel: "noopener noreferrer" }, "(open PDF)")) : "") : "No CV attached."));
   if (e.edited) view.append(h("div", { class: "muted" }, "You have edited the agent's draft."));
 
@@ -677,7 +809,8 @@ async function emailView(id) {
       h("button", { class: "danger", onclick: act(async () => { await api("POST", `/api/emails/${id}/discard`, {}); location.hash = "#/emails"; }) }, "Discard"));
   } else if (e.status === "sent") {
     buttons.append(h("span", { class: "muted" }, `Sent ${e.sentAt || ""}`),
-      c.status !== "bounced" && h("button", { class: "danger", onclick: act(() => api("POST", `/api/contacts/${c.id}/bounced`, {})) }, "A bounce came back: mark this address as bounced"));
+      c.status !== "bounced" && h("button", { class: "danger", title: "Only press this if a delivery-failure message came back for this email. It stops this address from being used again.", onclick: act(() => api("POST", `/api/contacts/${c.id}/bounced`, {})) }, "Mark this address as bounced"),
+      c.status !== "bounced" && h("span", { class: "muted" }, "Use this only if you got a delivery-failure message for this email."));
   } else {
     buttons.append(h("span", { class: "muted" }, e.status));
   }
@@ -822,6 +955,14 @@ async function settingsView() {
   const coverGuidance = h("textarea", { placeholder: "e.g. Warm but direct. Lead with my payments work. Never longer than three paragraphs." });
   coverGuidance.value = p.coverGuidance || "";
 
+  const autoReplied = h("input", { type: "checkbox" });
+  autoReplied.checked = p.autoMarkReplied !== false;
+  const followDays = textField("Suggest a follow-up after (days with no reply)", String(p.followUpDays ?? 7));
+  const followMax = textField("Follow-ups per application (0 turns them off)", String(p.maxFollowUps ?? 1));
+  const quietDays = textField("Mark as no response after (days, 0 never)", String(p.noResponseDays ?? 21));
+  const keepDays = textField("Keep the text of replies for (days)", String(p.replySnippetDays ?? 90));
+  const checkEvery = textField("Check for replies by itself every (minutes, 0 only when I press the button)", String(p.replyCheckMinutes ?? 0));
+
   const savePrefs = act(() => api("PUT", "/api/preferences", {
     searchAnySite: anySite.checked,
     bccSelf: bcc.checked,
@@ -832,6 +973,12 @@ async function settingsView() {
     cvGuidance: guidance.value,
     coverLetters: coverLetters.value,
     coverGuidance: coverGuidance.value,
+    autoMarkReplied: autoReplied.checked,
+    followUpDays: Number(followDays.get()),
+    maxFollowUps: Number(followMax.get()),
+    noResponseDays: Number(quietDays.get()),
+    replySnippetDays: Number(keepDays.get()),
+    replyCheckMinutes: Number(checkEvery.get()),
     countryPriority: countries.get(),
     employmentPriority: employment.get(),
     roles: roles.get(), seniority: level.get(), locations: where.get(), industries: industries.get(),
@@ -861,6 +1008,11 @@ async function settingsView() {
       h("div", { class: "field" }, h("label", {}, "Cover letters"), coverLetters,
         h("div", { class: "muted" }, "When on, the agent writes one for each email job (attached with your CV) and for any form that has a cover letter field. Every claim must rest on your facts.")),
       h("div", { class: "field" }, h("label", {}, "How my cover letters should read"), coverGuidance),
+      h("h2", {}, "Replies and follow-ups"),
+      h("div", { class: "field" }, h("label", {}, autoReplied, " When someone answers an email of mine directly (same thread), move the job to replied by itself"),
+        h("div", { class: "muted" }, "Other matches are only suggested. A rejection or an interview is always your decision.")),
+      h("div", { class: "row" }, followDays.el, followMax.el, quietDays.el),
+      h("div", { class: "row" }, keepDays.el, checkEvery.el),
       h("h2", {}, "Daily limits"),
       h("div", { class: "muted" }, `Today: ${budget.addedToday} of ${budget.limit} jobs added.`),
       h("div", { class: "row" }, discovery.el, applications.el),
@@ -928,6 +1080,7 @@ let currentPrefs = null;
 async function render() {
   const [, page, arg] = location.hash.split("?")[0].split("/");
   let queueCount = 0;
+  let repliesNew = 0;
   try {
     lists ||= await api("GET", "/api/lists");
     currentPrefs = await api("GET", "/api/preferences");
@@ -937,11 +1090,13 @@ async function render() {
     else if (page === "facts") await factsView();
     else if (page === "applications") await (arg ? applicationView(Number(arg)) : applicationsView());
     else if (page === "emails") await (arg ? emailView(Number(arg)) : emailsView());
+    else if (page === "replies") await repliesView();
     else if (page === "companies") await companiesView();
     else if (page === "vault") await vaultView();
     else if (page === "settings") await settingsView();
     else queueCount = await queueView();
     if (page) queueCount = (await api("GET", "/api/actions")).length;
+    repliesNew = (await api("GET", "/api/replies")).newCount;
   } catch (e) {
     view.replaceChildren(h("div", { class: "error" }, String(e.message || e)));
   }
@@ -953,6 +1108,7 @@ async function render() {
     h("a", { href: "#/companies", class: page === "companies" ? "active" : "" }, "Companies"),
     h("a", { href: "#/applications", class: page === "applications" ? "active" : "" }, "Forms"),
     h("a", { href: "#/emails", class: page === "emails" ? "active" : "" }, "Emails"),
+    h("a", { href: "#/replies", class: page === "replies" ? "active" : "" }, `Replies${repliesNew ? ` (${repliesNew})` : ""}`),
     h("a", { href: "#/vault", class: page === "vault" ? "active" : "" }, "Vault"),
     h("a", { href: "#/settings", class: page === "settings" ? "active" : "" }, "Settings"));
 }

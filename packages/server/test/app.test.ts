@@ -799,3 +799,16 @@ describe("profile sponsorship setting", () => {
     expect((await (await get("/api/profile")).json()).requiresSponsorship).toBeUndefined();
   });
 });
+
+describe("checking pasted job links", () => {
+  it("tells new links from known ones and needs the token", async () => {
+    const { agent } = seed();
+    agent.logSkippedCandidate({ url: "https://a.io/gone", reason: "dead" });
+    const r = await (await post("/api/links/check", { urls: ["https://a.io/1", "https://a.io/new", "https://a.io/gone", "nope"] })).json();
+    expect(r.map((x: any) => x.known ?? "bad")).toEqual(["job", "new", "skipped", "bad"]);
+    expect(r[0]).toMatchObject({ state: "found" });
+    expect((await post("/api/links/check", {})).status).toBe(200);
+    expect(await (await post("/api/links/check", {})).json()).toEqual([]);
+    expect((await fetch(base + "/api/links/check", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+  });
+});

@@ -520,4 +520,50 @@ ALTER TABLE preferences ADD COLUMN salary_period TEXT CHECK (salary_period IN ('
       ALTER TABLE emails ADD COLUMN cover_document_id INTEGER REFERENCES documents(id);
     `,
   },
+  {
+    id: 23,
+    name: "replies_and_follow_ups",
+    // messages: replies found in the user's mailbox that belong to an application (nothing else is kept).
+    // emails.kind: a follow-up is an email in the same thread as the application email, with no attachments.
+    sql: `
+      ALTER TABLE emails ADD COLUMN kind TEXT NOT NULL DEFAULT 'application' CHECK (kind IN ('application','follow_up'));
+      ALTER TABLE emails ADD COLUMN in_reply_to TEXT;
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY,
+        message_id TEXT NOT NULL UNIQUE,
+        job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
+        email_id INTEGER REFERENCES emails(id) ON DELETE SET NULL,
+        contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+        from_addr TEXT NOT NULL,
+        from_name TEXT,
+        subject TEXT NOT NULL,
+        received_at TEXT NOT NULL,
+        snippet TEXT NOT NULL DEFAULT '',
+        category TEXT NOT NULL DEFAULT 'reply' CHECK (category IN ('reply','auto_reply','bounce','rejection','interview','other')),
+        matched_by TEXT NOT NULL CHECK (matched_by IN ('thread','sender')),
+        status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','handled','ignored')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_messages_job ON messages(job_id);
+      CREATE TABLE mail_sync (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        last_run_at TEXT,
+        last_error TEXT,
+        last_checked INTEGER NOT NULL DEFAULT 0,
+        last_matched INTEGER NOT NULL DEFAULT 0
+      );
+      ALTER TABLE preferences ADD COLUMN auto_mark_replied INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE preferences ADD COLUMN follow_up_days INTEGER NOT NULL DEFAULT 7;
+      ALTER TABLE preferences ADD COLUMN max_follow_ups INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE preferences ADD COLUMN no_response_days INTEGER NOT NULL DEFAULT 21;
+      ALTER TABLE preferences ADD COLUMN reply_snippet_days INTEGER NOT NULL DEFAULT 90;
+      ALTER TABLE preferences ADD COLUMN reply_check_minutes INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    id: 24,
+    name: "user_provided_jobs",
+    // A job added from a link the user gave. It does not use the discovery limit; a separate daily allowance applies.
+    sql: `ALTER TABLE jobs ADD COLUMN user_provided INTEGER NOT NULL DEFAULT 0;`,
+  },
 ];

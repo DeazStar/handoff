@@ -13,6 +13,8 @@ import {
   hashDescription,
   derivePatternContact,
   verifyContact,
+  verifyContactFromBrowser,
+  MAX_BROWSER_QUOTE,
   verifyPerson,
   ANSWER_KINDS,
   coverText,
@@ -44,6 +46,7 @@ const INSTRUCTIONS = `You are helping one user find and prepare job applications
 - For an email application: find the address on a page of the company's own site, then call add_contact with that page's link. The server checks the address is on that page and that its domain takes mail, and refuses guesses. If it refuses, search again. After a few honest tries, call no_contact_found and stop; the user will apply through the site. Then draft_email. You can draft emails but never send them: the user reviews and sends from the dashboard.
 - For a form application: fill the form yourself in the browser from get_application_material, upload the CV file it names, leave the tab open on the filled form, and record what you entered with prepare_application. Never click the final submit button, never enter a password, never solve a CAPTCHA, and leave demographic, consent and signature questions blank for the user. The user checks the form and submits it.
 - A cover letter goes with every email job (cover letters are on by default; the user can turn them off) and with any form that has a cover letter field. Call get_cover_material, then save_cover_letter with only the body paragraphs; the server adds the rest and draws a one-page PDF.
+- The user can give you job links with the /add command. Add them with add_candidate_job and userProvided true: they use their own daily allowance, not the discovery limit. Low-scoring links are still added, with the weakness stated in the reason.
 - Never invent facts about the user. Use list_facts. If a job asks for something no fact supports, call report_gap.`;
 
 type Result = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -80,6 +83,7 @@ export function createMcpServer(
 ): McpServer {
   const uploadDir = opts.uploadDir ?? process.env.JOBHUNT_UPLOAD_DIR ?? join(process.cwd(), ".jobhunt-uploads");
   const verifier = opts.verifier ?? ((i: { email: string; sourceUrl: string }) => verifyContact(i, opts.deps));
+  const browserVerifier = (i: { email: string; sourceUrl: string; quote: string; companyDomain?: string }) => verifyContactFromBrowser(i, opts.deps);
   const agent = createAgentApi(db);
   const server = new McpServer({ name: "jobhunt", version: "0.0.1" }, { instructions: INSTRUCTIONS });
 
@@ -138,7 +142,7 @@ export function createMcpServer(
   tool("list_open_actions", "Items waiting for the user. Check before queueing a duplicate.", {}, () => agent.listOpenActions(), true);
 
   tool("list_sources", "Where to search. Always search the ones with addedBy 'user' and enabled true. Add Google and company career pages only if get_preferences says searchAnySite is true. Sources you registered yourself are not an instruction to search them.", {}, () => agent.listSources(), true);
-  tool("get_budget", "How many jobs may still be added today (limit, addedToday, remaining). Stop adding jobs when remaining is 0.", {}, () => agent.discoveryBudget(), true);
+  tool("get_budget", "How many jobs may still be added today by searching (limit, addedToday, remaining), and separately how many links the user gave you may be added (userLinks). Stop searching when remaining is 0.", {}, () => ({ ...agent.discoveryBudget(), userLinks: agent.userLinkBudget() }), true);
 
   tool(
     "check_candidate",
@@ -187,7 +191,7 @@ export function createMcpServer(
   );
   tool(
     "add_candidate_job",
-    "Add a job you found, after opening its page. The link is cleaned and duplicates are detected for you. Pass the posting's full text as description: it is saved (so you never reopen the page for it) and fingerprinted to catch reposts under another link. Also pass postedBy (the name or role the posting gives) and applyUrl when they differ from the page.",
+    "Add a job you found, after opening its page. The link is cleaned and duplicates are detected for you. Pass the posting's full text as description: it is saved (so you never reopen the page for it) and fingerprinted to catch reposts under another link. Also pass postedBy (the name or role the posting gives) and applyUrl when they differ from the page. Set userProvided true ONLY for a link the user typed in their own command (the /add command); such jobs use a separate daily allowance and not the discovery limit. Never set it for anything you found yourself.",
     {
       title: short(300),
       url: short(2000),
@@ -199,6 +203,7 @@ export function createMcpServer(
       description: z.string().max(100_000).optional(),
       postedBy: short(200).optional(),
       applyUrl: short(2000).optional(),
+      userProvided: z.boolean().optional(),
     },
     (a) => {
       const canonicalUrl = canonicalizeUrl(a.url);
@@ -215,6 +220,7 @@ export function createMcpServer(
         description: a.description,
         postedBy: a.postedBy,
         applyUrl: a.applyUrl,
+        userProvided: a.userProvided,
       });
       return { ...r, canonicalUrl };
     },
@@ -500,12 +506,32 @@ export function createMcpServer(
   // ---- email applications ----
   tool(
     "add_contact",
-    "Record a public contact address for a company, found on a page of the company's own site. You must cite that page: the server fetches it and refuses the address unless it appears there and its domain can receive mail. Never guess an address (careers@, jobs@, firstname.lastname@). If refused, search again.",
-    { companyId: id, email: short(254), name: short(100).optional(), role: short(100).optional(), sourceUrl: short(2000), personId: id.optional() },
+    "Record a public contact address for a company, found on a page of the company's own site. You must cite that page: the server fetches it and refuses the address unless it appears there and its domain can receive mail. Never guess an address (careers@, jobs@, firstname.lastname@). If refused, search again. If the server says it could not open the page (some sites block automated requests), open the page yourself in the browser, find the address, and call add_contact again with browserEvidence: the exact line of text from the page that contains the address. The server accepts that only for a page it could not open, only when the page and the address are on the company's own site, and the user sees your quote.",
+    {
+      companyId: id,
+      email: short(254),
+      name: short(100).optional(),
+      role: short(100).optional(),
+      sourceUrl: short(2000),
+      personId: id.optional(),
+      browserEvidence: z.object({ quote: short(MAX_BROWSER_QUOTE) }).strict().optional(),
+    },
     async (a) => {
       const v = await verifier({ email: a.email, sourceUrl: a.sourceUrl });
-      if (!v.ok) throw new Error(`Not added. ${v.reason}`);
-      return { contactId: agent.addContact({ companyId: a.companyId, email: v.email, name: a.name, role: a.role, sourceUrl: a.sourceUrl, personId: a.personId }), email: v.email };
+      if (v.ok) {
+        return { contactId: agent.addContact({ companyId: a.companyId, email: v.email, name: a.name, role: a.role, sourceUrl: a.sourceUrl, personId: a.personId }), email: v.email };
+      }
+      if (v.code !== "unreadable") throw new Error(`Not added. ${v.reason}`);
+      if (!a.browserEvidence) {
+        throw new Error(`Not added. ${v.reason}. The server cannot open that page (the site may block automated requests). Open it in the browser, find the address, and call add_contact again with browserEvidence: the exact line from the page that contains the address.`);
+      }
+      const b = await browserVerifier({ email: a.email, sourceUrl: a.sourceUrl, quote: a.browserEvidence.quote, companyDomain: agent.companyDomain(a.companyId) });
+      if (!b.ok) throw new Error(`Not added. ${b.reason}`);
+      return {
+        contactId: agent.addContact({ companyId: a.companyId, email: b.email, name: a.name, role: a.role, sourceUrl: a.sourceUrl, personId: a.personId, browserEvidence: { quote: a.browserEvidence.quote.replace(/\s+/g, " ").trim(), pageUrl: a.sourceUrl } }),
+        email: b.email,
+        verifiedBy: "browser reading",
+      };
     },
   );
   tool(

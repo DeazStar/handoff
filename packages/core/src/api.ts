@@ -3,7 +3,7 @@ import { addPerson, getCompanyResearch, listPeople, markCompanyResearched } from
 import { getJobDescription } from "./queries.js";
 import { saveJobDetails } from "./jobs.js";
 import { addContact, applicationsToday, beginSend, discardEmail, draftEmail, failSend, finishSend, getContact, getEmail, listContacts, listEmails, markContactBounced, noContactFound, releaseSend, updateEmail, type DraftInput } from "./email.js";
-import { addCandidateJobWithinBudget, checkCandidate, logSkippedCandidate, type SkipReason, discoveryBudget, listSources, recordVerification, setMatch, type JobSignals, setRoute, setSourceEnabled, upsertCompany, upsertSource, type Verification } from "./agentOps.js";
+import { addCandidateJobWithinBudget, checkCandidate, checkLinks, userLinkBudget, logSkippedCandidate, type SkipReason, discoveryBudget, listSources, recordVerification, setMatch, type JobSignals, setRoute, setSourceEnabled, upsertCompany, upsertSource, type Verification } from "./agentOps.js";
 import { confirmGap, listOpenActions, queueAction, reportGap, resolveAction, type ActionKind, type GapReport } from "./actionQueue.js";
 import type { DB } from "./db.js";
 import { deleteDocument, getDocument, listDocuments, nextDocumentVersion, saveDocument, type NewDocument } from "./documents.js";
@@ -14,6 +14,7 @@ import { addCandidateJob, logEvent, transitionJob, type NewJob } from "./jobs.js
 import { getPreferences, getProfile, setPreferences, setProfile, type Preferences, type Profile } from "./profile.js";
 import { directoryStats, importDirectory, listDirectory, listScoutCompanies, setCompanyVerdict, type DirectoryCompany, type DirectoryFilter, type Verdict } from "./directory.js";
 import { setCareersPage } from "./careers.js";
+import { applyMessageOutcome, draftFollowUp, dueFollowUps, getSyncState, listMessages, newMessageCount, setMessageCategory, setMessageStatus, type Category, type MessageStatus } from "./replies.js";
 import { coverMode, getCoverMaterial, latestCover, prepareCover, type CoverPlan } from "./cover.js";
 import { listActionsDetailed, listJobs, getJob, sourceStats } from "./queries.js";
 import { allowedTransitions, type JobState } from "./states.js";
@@ -54,11 +55,13 @@ export function createAgentApi(db: DB) {
     getCoverMaterial: (jobId: number) => getCoverMaterial(db, jobId),
     latestCover: (jobId: number) => latestCover(db, jobId),
     coverMode: () => coverMode(db),
+    userLinkBudget: () => userLinkBudget(db),
+    companyDomain: (companyId: number) => (db.prepare("SELECT domain FROM companies WHERE id = ?").get(companyId) as { domain: string | null } | undefined)?.domain ?? undefined,
     listScoutCompanies: (limit: number) => listScoutCompanies(db, limit, true),
     setCareersPage: (companyId: number, r: { url: string } | { none: true; note?: string }) => setCareersPage(db, companyId, r, "agent"),
     setCompanyVerdict: (companyId: number, verdict: "potential" | "discarded", reason: string) => setCompanyVerdict(db, companyId, verdict, reason, "agent"),
     // Contacts and drafts. The agent can add a verified contact and write a draft; it can never send.
-    addContact: (c: { companyId: number; email: string; name?: string; role?: string; sourceUrl: string; personId?: number; verification?: "on_page" | "pattern"; evidence?: { pattern: string; exampleEmail: string; exampleName: string; exampleUrl: string } }) => addContact(db, c, "agent"),
+    addContact: (c: { companyId: number; email: string; name?: string; role?: string; sourceUrl: string; personId?: number; verification?: "on_page" | "pattern"; browserEvidence?: { quote: string; pageUrl: string }; evidence?: { pattern: string; exampleEmail: string; exampleName: string; exampleUrl: string } }) => addContact(db, c, "agent"),
     listContacts: (companyId: number) => listContacts(db, companyId),
     addPerson: (p: { companyId: number; name: string; role: string; sourceUrl: string }) => addPerson(db, p, "agent"),
     listPeople: (companyId: number) => listPeople(db, companyId),
@@ -145,8 +148,18 @@ export function createHumanApi(db: DB) {
     listActionsDetailed: () => listActionsDetailed(db),
     sourceStats: () => sourceStats(db),
     listDirectory: (f: DirectoryFilter) => listDirectory(db, f),
+    checkLinks: (urls: string[]) => checkLinks(db, urls),
     directoryStats: () => directoryStats(db),
     importDirectory: (rows: DirectoryCompany[]) => importDirectory(db, rows, "human"),
+    // Replies and follow-ups. The dashboard reads the mailbox itself; the agent cannot.
+    listMessages: (opts?: { status?: MessageStatus; jobId?: number }) => listMessages(db, opts),
+    newMessageCount: () => newMessageCount(db),
+    setMessageStatus: (id: number, status: MessageStatus) => setMessageStatus(db, id, status, "human"),
+    setMessageCategory: (id: number, category: Category) => setMessageCategory(db, id, category, "human"),
+    applyMessageOutcome: (id: number, to: "replied" | "interview" | "rejected") => applyMessageOutcome(db, id, to, "human"),
+    draftFollowUp: (jobId: number) => draftFollowUp(db, jobId, "human"),
+    getSyncState: () => getSyncState(db),
+    dueFollowUps: () => dueFollowUps(db),
     setCompanyVerdict: (companyId: number, verdict: Verdict, reason?: string) => setCompanyVerdict(db, companyId, verdict, reason, "human"),
     listSources: () => listSources(db),
     addSource: (s: Parameters<typeof upsertSource>[1]) => upsertSource(db, s, "human"),

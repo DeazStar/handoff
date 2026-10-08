@@ -50,3 +50,7 @@ td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line
 button.good { color: var(--good); }
 .badge.good { color: var(--good); border-color: var(--good); }
 .company.discarded-flag { border-left: 4px solid var(--warn); }
+.message.interview { border-left: 4px solid var(--good); }
+.message.rejection { border-left: 4px solid var(--bad); }
+.message.bounce { border-left: 4px solid var(--warn); }
+.message.auto_reply { opacity: 0.7; }

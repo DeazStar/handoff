@@ -96,7 +96,7 @@ describe("settings the agent respects", () => {
     const human = createHumanApi(db);
     human.setPreferences({ roles: [], seniority: [], locations: [], remotePolicy: "any", industries: [], exclusions: [], dailyApplicationLimit: 5, dailyDiscoveryLimit: 2, searchAnySite: true });
     human.addSource({ kind: "jobsite", name: "remoteok.com" });
-    expect((await call("get_budget")).data).toEqual({ limit: 2, addedToday: 0, remaining: 2 });
+    expect((await call("get_budget")).data).toEqual({ limit: 2, addedToday: 0, remaining: 2, userLinks: { limit: 10, addedToday: 0, remaining: 10 } });
     await call("add_candidate_job", job);
     expect((await call("get_budget")).data.remaining).toBe(1);
     await call("add_candidate_job", { title: "Second", url: "https://acme.example/jobs/2" });

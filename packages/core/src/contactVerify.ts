@@ -13,7 +13,11 @@ export interface VerifyDeps {
   fetchPage(url: string): Promise<string>;
 }
 
-export type VerifyResult = { ok: true; email: string } | { ok: false; reason: string };
+/**
+ * code: invalid (not an address), no_mail (the domain takes no mail), unreadable (the server could not open the page: it may block
+ * automated requests), not_on_page (it opened the page and the address is not there).
+ */
+export type VerifyResult = { ok: true; email: string } | { ok: false; reason: string; code?: "invalid" | "no_mail" | "unreadable" | "not_on_page" };
 
 /** Local, private and reserved addresses. A page the agent names must never make this machine call them. */
 export function isPrivateAddress(ip: string): boolean {
@@ -145,23 +149,24 @@ export async function verifyContact(
   deps: VerifyDeps = defaultVerifyDeps,
 ): Promise<VerifyResult> {
   const email = input.email.trim().toLowerCase();
-  if (!EMAIL.test(email) || email.length > 254) return { ok: false, reason: `"${input.email}" is not a valid email address` };
+  if (!EMAIL.test(email) || email.length > 254) return { ok: false, code: "invalid", reason: `"${input.email}" is not a valid email address` };
   const domain = email.split("@")[1]!;
   try {
-    if (!(await deps.hasMail(domain))) return { ok: false, reason: `The domain ${domain} has no mail records, so mail to ${email} would bounce` };
+    if (!(await deps.hasMail(domain))) return { ok: false, code: "no_mail", reason: `The domain ${domain} has no mail records, so mail to ${email} would bounce` };
   } catch (e) {
-    return { ok: false, reason: (e as Error).message };
+    return { ok: false, code: "no_mail", reason: (e as Error).message };
   }
   if (input.sourceUrl) {
     let html: string;
     try {
       html = await deps.fetchPage(input.sourceUrl);
     } catch (e) {
-      return { ok: false, reason: `Could not read ${input.sourceUrl}: ${(e as Error).message}` };
+      return { ok: false, code: "unreadable", reason: `Could not read ${input.sourceUrl}: ${(e as Error).message}` };
     }
     if (!pageShowsEmail(html, email)) {
       return {
         ok: false,
+        code: "not_on_page",
         reason: `${email} does not appear on ${input.sourceUrl}. Search again: look for a mailto: link or the address written on the company's own site, and never guess an address.`,
       };
     }
@@ -256,4 +261,47 @@ export async function derivePatternContact(
     return { ok: false, reason: (e as Error).message };
   }
   return { ok: true, email, pattern };
+}
+
+const hostOf = (url: string): string | undefined => {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.hostname.toLowerCase().replace(/^www\./, "") : undefined;
+  } catch {
+    return undefined;
+  }
+};
+const sameSite = (a: string, b: string) => a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
+
+export const MAX_BROWSER_QUOTE = 400;
+
+/**
+ * For a page the server could not open (the site blocks automated requests) but the agent read in a real browser. The server cannot
+ * look at the page itself, so it accepts the agent's quote only if every check it CAN make passes: the quote is a real line of text
+ * that contains the address, the page is on the company's own site, the address is at that same site (not a free-mail or third-party
+ * address), and its domain takes mail. The quote is kept and shown to the user, who confirms by sending.
+ */
+export async function verifyContactFromBrowser(
+  input: { email: string; sourceUrl: string; quote: string; companyDomain?: string },
+  deps: Pick<VerifyDeps, "hasMail"> = defaultVerifyDeps,
+): Promise<VerifyResult> {
+  const email = input.email.trim().toLowerCase();
+  if (!EMAIL.test(email) || email.length > 254) return { ok: false, code: "invalid", reason: `"${input.email}" is not a valid email address` };
+  const quote = input.quote.replace(/\s+/g, " ").trim();
+  if (quote.length < 8 || quote.length > MAX_BROWSER_QUOTE) return { ok: false, code: "not_on_page", reason: `The quote must be the line from the page that contains the address, 8 to ${MAX_BROWSER_QUOTE} characters` };
+  if (!pageShowsEmail(quote, email)) return { ok: false, code: "not_on_page", reason: `The quote you gave does not contain ${email}. Quote the exact line from the page` };
+  const pageHost = hostOf(input.sourceUrl);
+  if (!pageHost) return { ok: false, code: "invalid", reason: "The page must be a web link" };
+  const emailDomain = email.split("@")[1]!;
+  const company = input.companyDomain?.toLowerCase().replace(/^www\./, "");
+  if (company && !sameSite(pageHost, company)) return { ok: false, code: "not_on_page", reason: `${pageHost} is not the company's own site (${company}). Cite a page on the company's site` };
+  if (!sameSite(emailDomain, pageHost) && !(company && sameSite(emailDomain, company))) {
+    return { ok: false, code: "not_on_page", reason: `${email} is not at the company's own domain (${company ?? pageHost}), so a browser reading is not enough. Find an address at the company's domain` };
+  }
+  try {
+    if (!(await deps.hasMail(emailDomain))) return { ok: false, code: "no_mail", reason: `The domain ${emailDomain} has no mail records, so mail to ${email} would bounce` };
+  } catch (e) {
+    return { ok: false, code: "no_mail", reason: (e as Error).message };
+  }
+  return { ok: true, email };
 }

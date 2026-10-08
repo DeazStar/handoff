@@ -7,6 +7,7 @@ import { collectYc, runCareerFinder, VERDICTS, type Verdict, COUNTRIES, EMPLOYME
 import { renderCvPdf } from "@jobhunt/render";
 import { VaultError, type Vault } from "@jobhunt/vault";
 import { MailError, type Mailer } from "./mail.js";
+import type { ReplySync } from "./replySync.js";
 
 const PUBLIC = new URL("../public/", import.meta.url);
 const STATIC: Record<string, [string, string]> = {
@@ -113,7 +114,7 @@ const int = (s: string) => {
   return n;
 };
 
-export function createApp(db: DB, opts: { token: string; dataDir: string; vault: Vault; mailer: Mailer; verifyDeps?: VerifyDeps; collectYc?: typeof collectYc }): Server {
+export function createApp(db: DB, opts: { token: string; dataDir: string; vault: Vault; mailer: Mailer; verifyDeps?: VerifyDeps; collectYc?: typeof collectYc; replySync?: ReplySync }): Server {
   const vault = opts.vault;
   const mailer = opts.mailer;
   const human = createHumanApi(db);
@@ -146,6 +147,7 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
     return {
       ...detail,
       application: human.getApplication(id),
+      messages: human.listMessages({ jobId: id }),
       posting: human.getJobDescription(id),
       people: research?.people ?? [],
       researchedAt: research?.researchedAt,
@@ -201,6 +203,12 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
       cvGuidance: optText(b.cvGuidance),
       coverLetters: b.coverLetters === "off" ? "off" : b.coverLetters === "auto" ? "auto" : undefined,
       coverGuidance: optText(b.coverGuidance),
+      autoMarkReplied: b.autoMarkReplied === false ? false : b.autoMarkReplied === true ? true : undefined,
+      followUpDays: b.followUpDays === undefined ? undefined : Number(b.followUpDays),
+      maxFollowUps: b.maxFollowUps === undefined ? undefined : Number(b.maxFollowUps),
+      noResponseDays: b.noResponseDays === undefined ? undefined : Number(b.noResponseDays),
+      replySnippetDays: b.replySnippetDays === undefined ? undefined : Number(b.replySnippetDays),
+      replyCheckMinutes: b.replyCheckMinutes === undefined ? undefined : Number(b.replyCheckMinutes),
       countryPriority: strings(b.countryPriority),
       bccSelf: b.bccSelf !== false,
       researchMinScore: b.researchMinScore === undefined || b.researchMinScore === "" ? undefined : Number(b.researchMinScore),
@@ -239,6 +247,8 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
     human.setCompanyVerdict(int(m[1]!), b.verdict, typeof b.reason === "string" ? b.reason : undefined);
     return { ok: true };
   });
+  // For a pasted list of job links: which are new, and which the pipeline already has. Opens nothing.
+  route("POST", "/api/links/check", (_m, b) => human.checkLinks(Array.isArray(b.urls) ? b.urls.map(String) : []));
   route("GET", "/api/sources", () => human.listSources());
   route("POST", "/api/sources", (_m, b) => {
     if (!["jobsite", "careers_page", "email_contact", "google"].includes(b.kind)) throw new HttpError(400, "Bad source kind");
@@ -343,7 +353,7 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
     human.beginSend(id); // claims it: a second click gets an error and sends nothing
     try {
       const bcc = human.getPreferences()?.bccSelf !== false && profile.email && profile.email.toLowerCase() !== email.contact.email ? [profile.email] : undefined;
-      const r = await mailer.send({ to: email.contact.email, subject: email.subject, text: email.bodyText, fromName: profile.fullName, bcc, attachments });
+      const r = await mailer.send({ to: email.contact.email, subject: email.subject, text: email.bodyText, fromName: profile.fullName, bcc, attachments, ...(email.kind === "follow_up" && email.inReplyTo ? { inReplyTo: email.inReplyTo, references: [email.inReplyTo] } : {}) });
       if (r.dryRun) {
         human.releaseSend(id); // nothing was sent, so nothing changes
         return { ok: true, dryRun: true };
@@ -355,6 +365,33 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
       throw e;
     }
   });
+  // ---- replies and follow-ups ----
+  // The dashboard reads the mailbox (read-only, with the login from the vault). The agent has no tool for any of this.
+  route("GET", "/api/replies", () => ({
+    sync: human.getSyncState(),
+    running: opts.replySync?.isRunning() ?? false,
+    canCheck: !!opts.replySync,
+    newCount: human.newMessageCount(),
+    due: human.dueFollowUps(),
+    messages: human.listMessages(),
+  }));
+  route("POST", "/api/replies/sync", async () => {
+    if (!opts.replySync) throw new HttpError(501, "Checking replies is not set up");
+    if (!vault.status().unlocked) throw new VaultError("locked", "Unlock the vault first (Vault page)");
+    if (!vault.status().secrets!.some((x) => x.name === "mail.smtp")) throw new MailError("not_configured", "Save your mail app password in the Vault first");
+    return opts.replySync.run();
+  });
+  route("POST", "/api/messages/(\\d+)", (m, b) => {
+    if (b.status !== undefined) human.setMessageStatus(int(m[1]!), b.status);
+    if (b.category !== undefined) human.setMessageCategory(int(m[1]!), b.category);
+    return { ok: true };
+  });
+  route("POST", "/api/messages/(\\d+)/outcome", (m, b) => {
+    if (!["replied", "interview", "rejected"].includes(b.to)) throw new HttpError(400, "to must be replied, interview or rejected");
+    human.applyMessageOutcome(int(m[1]!), b.to);
+    return { ok: true };
+  });
+  route("POST", "/api/jobs/(\\d+)/follow-up", (m) => human.draftFollowUp(int(m[1]!)));
   route("POST", "/api/contacts/(\\d+)/bounced", (m) => (human.markContactBounced(int(m[1]!)), { ok: true }));
   // An address the user types. Only the domain is checked, since there is no page to find it on.
   route("POST", "/api/jobs/(\\d+)/contacts", async (m, b) => {

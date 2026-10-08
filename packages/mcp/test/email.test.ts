@@ -119,3 +119,63 @@ describe("drafting", () => {
     expect((await call("draft_email", { jobId, contactId, blocks: blocks() })).text).toMatch(/bounced/);
   });
 });
+
+describe("a site the server cannot open", () => {
+  // Their site refuses the server's request, as devsdata.com does, but the agent can read it in a real browser.
+  let blockedClient: Client;
+  const blockedDeps = { hasMail: async () => true, fetchPage: async () => { throw new Error("the page returned 403"); } };
+  async function blocked(deps: object = blockedDeps) {
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await createMcpServer(db, { dataDir: mkdtempSync(join(tmpdir(), "jobhunt-blocked-")), deps: deps as never }).connect(a);
+    blockedClient = new Client({ name: "test", version: "0" });
+    await blockedClient.connect(b);
+  }
+  const add = async (args: Record<string, unknown>) => {
+    const r = (await blockedClient.callTool({ name: "add_contact", arguments: { companyId, ...args } })) as { isError?: boolean; content: { text: string }[] };
+    let data: any = r.content[0]!.text;
+    try { data = JSON.parse(data); } catch {}
+    return { error: r.isError === true, text: r.content[0]!.text, data };
+  };
+  const getContactById = (id: number) => createAgentApi(db).listContacts(companyId).find((c) => c.id === id);
+  const page = "https://acme.example/careers/job/1";
+  const quote = "APPLY VIA EMAIL recruitment@acme.example";
+
+  it("tells the agent to read the page in a browser, and refuses without a quote", async () => {
+    await blocked();
+    const r = await add({ email: "recruitment@acme.example", sourceUrl: page });
+    expect(r.error).toBe(true);
+    expect(r.text).toMatch(/cannot open that page/);
+    expect(r.text).toMatch(/browserEvidence/);
+  });
+
+  it("saves the address with the quote when the browser reading holds up, and shows it on the contact", async () => {
+    await blocked();
+    const r = await add({ email: "recruitment@acme.example", name: "Recruitment", sourceUrl: page, browserEvidence: { quote } });
+    expect(r.error).toBe(false);
+    expect(r.data.verifiedBy).toBe("browser reading");
+    const c = getContactById(r.data.contactId);
+    expect(c).toMatchObject({ email: "recruitment@acme.example", verification: "on_page", browserEvidence: { quote, pageUrl: page } });
+  });
+
+  it("refuses a quote that does not contain the address, a page of another site and a free-mail address", async () => {
+    await blocked();
+    expect((await add({ email: "recruitment@acme.example", sourceUrl: page, browserEvidence: { quote: "APPLY VIA EMAIL, see below" } })).text).toMatch(/does not contain/);
+    expect((await add({ email: "recruitment@acme.example", sourceUrl: "https://jobs.example.org/acme", browserEvidence: { quote } })).text).toMatch(/not the company's own site/);
+    expect((await add({ email: "me@gmail.com", sourceUrl: page, browserEvidence: { quote: "write me@gmail.com" } })).text).toMatch(/not at the company's own domain/);
+    expect((await call("list_contacts", { companyId })).data.filter((c: any) => c.email !== "jobs@acme.example")).toEqual([]);
+  });
+
+  it("does not let a quote override a page the server could read and that does not show the address", async () => {
+    await blocked({ hasMail: async () => true, fetchPage: async () => "<p>Contact us through the form</p>" });
+    const r = await add({ email: "recruitment@acme.example", sourceUrl: page, browserEvidence: { quote } });
+    expect(r.error).toBe(true);
+    expect(r.text).toMatch(/does not appear on/);
+  });
+
+  it("still takes a normal address from a page the server can read, with no quote needed", async () => {
+    await blocked({ hasMail: async () => true, fetchPage: async () => '<a href="mailto:jobs@acme.example">Email us</a>' });
+    const r = await add({ email: "jobs@acme.example", sourceUrl: page });
+    expect(r.error).toBe(false);
+    expect(getContactById(r.data.contactId)!.browserEvidence).toBeUndefined();
+  });
+});
