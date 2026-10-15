@@ -10,6 +10,8 @@ Everything runs on your computer. Your data lives in one SQLite file, the dashbo
 
 > **Status:** early. Expect rough edges, and read the [limitations](#limitations) before relying on it.
 
+> **Who it is for, today:** software developers. The CV rules, skill groups, writing examples and job search are tuned for software engineering roles. The plan is to make Handoff generic, so it works for any kind of job: see the [roadmap](#roadmap).
+
 ## What it does
 
 | | |
@@ -111,6 +113,15 @@ Data lives in `~/.jobhunt` by default. Useful environment variables:
 - Form filling depends on each site's page and on the permission prompts of your Claude app. Some sites need a manual click.
 - Reply matching for form applications is a suggestion for you to check, never automatic.
 - Nothing here is legal, career or financial advice. You are responsible for what you send.
+
+## Roadmap
+Handoff is built for developers first. The goal is a version that works for any profession. Planned, not built yet:
+- **Profession packs.** The CV sections, skill groups, level names, keyword scoring and writing examples become a pack you can swap, so a nurse, a designer or an accountant gets rules and examples that fit their field. Software engineering becomes the first pack.
+- **Job sources beyond tech.** Search and company lists for more than tech job boards and startup directories.
+- **Easier setup.** A guided first run, a single setup command, and tested support for Linux and Windows.
+- **A browser extension** for sign-ups and profile filling, so even less runs through the assistant.
+
+Ideas and contributions are welcome, especially from people in other fields who can say what a good CV and a good message look like in theirs.
 
 ## Development
 ```bash
