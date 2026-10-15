@@ -100,8 +100,8 @@ describe("the mailbox reader", () => {
 
   it("also asks for mail that names the company, for jobs applied for through a form", async () => {
     const t = await reader();
-    await t.r.fetch({ ...targets, companyTerms: ["Quadrant Health", "Acme"] });
-    expect(t.searches.slice(-2)).toEqual([{ since: targets.since, text: "Quadrant Health" }, { since: targets.since, text: "Acme" }]);
+    await t.r.fetch({ ...targets, companyTerms: ["Harbor Health", "Acme"] });
+    expect(t.searches.slice(-2)).toEqual([{ since: targets.since, text: "Harbor Health" }, { since: targets.since, text: "Acme" }]);
     const plain = await reader();
     await plain.r.fetch(targets);
     expect(plain.searches.some((q: any) => q.text)).toBe(false);

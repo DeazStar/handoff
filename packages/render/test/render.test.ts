@@ -4,7 +4,7 @@ import { drawable, formatDateRange, renderCoverPdf, renderCvPdf } from "../src/i
 
 const entry = (over: Partial<CvEntry> = {}): CvEntry => ({ id: 1, kind: "work", title: "Backend Engineer", organization: "Acme", location: "Remote", isCurrent: false, sortOrder: 1, ...over });
 const base = (): ResolvedCv => ({
-  header: { name: "Ada Lovelace", email: "ada@example.com", phone: "0900", location: "Addis Ababa, Ethiopia", links: ["https://www.ada.dev/"] },
+  header: { name: "Ada Lovelace", email: "ada@example.com", phone: "0900", location: "Lisbon, Portugal", links: ["https://www.ada.dev/"] },
   summary: ["Backend engineer."],
   experience: [{ entry: entry({ startDate: "2022-03", endDate: "2024-01" }), bullets: ["Built a payments API serving 50000 users"] }],
   projects: [{ entry: entry({ kind: "project", title: "Web server in C", organization: undefined }), bullets: ["HTTP 1.1 server"] }],
@@ -55,7 +55,7 @@ describe("renderCvPdf", () => {
 
 describe("cover letter", () => {
   const letter = (paragraphs: string[]) => ({
-    header: { name: "Ada Lovelace", email: "ada@example.com", phone: "0900", location: "Addis Ababa, Ethiopia", links: ["https://www.ada.dev/"] },
+    header: { name: "Ada Lovelace", email: "ada@example.com", phone: "0900", location: "Lisbon, Portugal", links: ["https://www.ada.dev/"] },
     date: "2026-10-07", recipient: "Jane Doe, Head of Engineering", company: "Acme", subject: "Application: Backend Engineer",
     greeting: "Dear Jane,", paragraphs, closing: "Sincerely,", signature: "Ada Lovelace",
   });

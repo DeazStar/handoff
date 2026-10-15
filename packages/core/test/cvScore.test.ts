@@ -33,8 +33,8 @@ describe("the CV summary rules", () => {
   it("refuses numbers other than years, and a sentence that repeats a bullet", () => {
     const r = summaryProblems(["Backend engineer who cut query time by 40% on a platform."], 4);
     expect(r.problems.join(" ")).toMatch(/no numbers except years/);
-    expect(repeatsBullet("Rebuilt the generated queries behind a Neo4j annotation platform around Cypher CALL subqueries", ["Rebuilt the generated queries around Cypher CALL subqueries, removing the Cartesian product on the Neo4j annotation platform"])).toBeTruthy();
-    expect(repeatsBullet("Leads backend work on a healthcare platform and has built e-commerce platforms", ["Built a full-stack e-commerce platform using TypeScript and Node.js", "Designed REST APIs and authentication for patient data"])).toBeUndefined();
+    expect(repeatsBullet("Rebuilt the generated queries behind a reporting platform around SQL window functions", ["Rebuilt the generated queries around SQL window functions, removing the Cartesian join on the reporting platform"])).toBeTruthy();
+    expect(repeatsBullet("Leads backend work on a payments platform and has built e-commerce platforms", ["Built a full-stack e-commerce platform using TypeScript and Node.js", "Designed REST APIs and authentication for payment data"])).toBeUndefined();
   });
 
   it("allows a years claim the roles back, and cannot check one without dates", () => {

@@ -37,8 +37,8 @@ describe("bullets that need a number", () => {
     human.requestMetricCards(5);
     const card = (listOpenActions(db) as { id: number; payload: string }[]).find((c) => JSON.parse(c.payload).metricFactId === noNumber1)!;
     expect(throws(() => human.confirmMetric(card.id, "Designed the authentication layer"))).toMatch(/Add the number/);
-    human.confirmMetric(card.id, "Designed the authentication layer used by 12000 patients");
-    expect(listFacts(db).find((f) => f.id === noNumber1)).toMatchObject({ text: "Designed the authentication layer used by 12000 patients", jobId: undefined });
+    human.confirmMetric(card.id, "Designed the authentication layer used by 12000 customers");
+    expect(listFacts(db).find((f) => f.id === noNumber1)).toMatchObject({ text: "Designed the authentication layer used by 12000 customers", jobId: undefined });
     expect((listOpenActions(db) as { id: number }[]).some((c) => c.id === card.id)).toBe(false);
     expect(countBulletsWithoutNumber(db)).toBe(0); // the other one already has its own card
     expect(throws(() => human.confirmMetric(card.id, "again 5"))).toMatch(/already resolved|not a number request/);
@@ -61,21 +61,21 @@ describe("typing the number and letting Claude word the bullet", () => {
     human.requestMetricCards(5);
     const c = card(db, noNumber1);
     expect(throws(() => human.requestMetricPolish(c.id, "a lot of users"))).toMatch(/Give the number/);
-    human.requestMetricPolish(c.id, "about 12,000 patients");
-    expect(agent.listGapPolishRequests()).toEqual([expect.objectContaining({ actionId: c.id, original: "Designed the authentication layer", numbers: "about 12,000 patients" })]);
+    human.requestMetricPolish(c.id, "about 12,000 customers");
+    expect(agent.listGapPolishRequests()).toEqual([expect.objectContaining({ actionId: c.id, original: "Designed the authentication layer", numbers: "about 12,000 customers" })]);
   });
 
   it("accepts a bullet that carries exactly the typed number, and refuses one that drops it or adds another", () => {
     const { db, human, agent, noNumber1 } = setup();
     human.requestMetricCards(5);
     const c = card(db, noNumber1);
-    human.requestMetricPolish(c.id, "about 12000 patients");
-    expect(throws(() => agent.submitGapPolish(c.id, "Designed the authentication layer for patients."))).toMatch(/must carry the number/);
-    expect(throws(() => agent.submitGapPolish(c.id, "Designed the authentication layer for 12000 patients in 3 countries."))).toMatch(/"3"/);
-    agent.submitGapPolish(c.id, "Designed the authentication layer used by 12000 patients.");
-    expect(JSON.parse((db.prepare("SELECT payload FROM action_queue WHERE id = ?").get(c.id) as { payload: string }).payload).polish).toMatchObject({ status: "ready", polished: "Designed the authentication layer used by 12000 patients." });
-    human.confirmMetric(c.id, "Designed the authentication layer used by 12000 patients.");
-    expect(listFacts(db).find((f) => f.id === noNumber1)?.text).toMatch(/12000 patients/);
+    human.requestMetricPolish(c.id, "about 12000 customers");
+    expect(throws(() => agent.submitGapPolish(c.id, "Designed the authentication layer for customers."))).toMatch(/must carry the number/);
+    expect(throws(() => agent.submitGapPolish(c.id, "Designed the authentication layer for 12000 customers in 3 countries."))).toMatch(/"3"/);
+    agent.submitGapPolish(c.id, "Designed the authentication layer used by 12000 customers.");
+    expect(JSON.parse((db.prepare("SELECT payload FROM action_queue WHERE id = ?").get(c.id) as { payload: string }).payload).polish).toMatchObject({ status: "ready", polished: "Designed the authentication layer used by 12000 customers." });
+    human.confirmMetric(c.id, "Designed the authentication layer used by 12000 customers.");
+    expect(listFacts(db).find((f) => f.id === noNumber1)?.text).toMatch(/12000 customers/);
   });
 
   it("is only for number cards", () => {

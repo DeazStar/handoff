@@ -67,7 +67,7 @@ describe("the user's weights are enforced on save_cv", () => {
 
 describe("country priority on save_cv", () => {
   it("shows the priority and refuses a plan that breaks it", async () => {
-    db.prepare("UPDATE cv_entries SET country = 'Ethiopia' WHERE id = ?").run(ids.acme);
+    db.prepare("UPDATE cv_entries SET country = 'Portugal' WHERE id = ?").run(ids.acme);
     db.prepare("UPDATE cv_entries SET country = 'United States' WHERE id = ?").run(ids.beta);
     db.prepare("INSERT INTO preferences (id, country_priority) VALUES (1, ?)").run(JSON.stringify(["United States"]));
     const m = (await call("get_cv_material")).data;

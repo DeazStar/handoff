@@ -407,7 +407,7 @@ const GAP_KINDS = [["experience", "Something I did"], ["achievement", "A result 
  */
 function metricCard(a, g) {
   const bullet = (g.suggestedFact && g.suggestedFact.text) || "";
-  const numbers = h("input", { class: "grow", placeholder: "The number and what it counts, e.g. 12,000 patients, about 40% faster, 6 services" });
+  const numbers = h("input", { class: "grow", placeholder: "The number and what it counts, e.g. 12,000 customers, about 40% faster, 6 services" });
   const panel = h("div", {});
   const clear = () => api("POST", "/api/gap-polish/clear", { actionId: a.id });
   const save = (box) => quiet(async () => {
@@ -417,7 +417,7 @@ function metricCard(a, g) {
     await render();
   });
   const addBtn = h("button", { class: "primary", onclick: quiet(async () => {
-    if (!/\d/.test(numbers.value)) throw new Error("Type the number first, for example 12,000 patients or 40% faster");
+    if (!/\d/.test(numbers.value)) throw new Error("Type the number first, for example 12,000 customers or 40% faster");
     await api("POST", "/api/metric-polish", { actionId: a.id, numbers: numbers.value });
     card.dataset.state = ""; show({ status: "requested", original: bullet, numbers: numbers.value }); pollDrafts();
   }) }, "Let Claude word it");
@@ -1541,7 +1541,7 @@ async function settingsView() {
 
   const roles = anyList("Target roles", "Backend Engineer, Data Engineer", p.roles);
   const level = multiPicker("Levels I am looking for", lists.seniorityLevels.map((l) => [l.value, l.label]), p.seniority, "Any level. Pick one or more to narrow it down.");
-  const where = anyList("Locations", "Addis Ababa, Remote", p.locations);
+  const where = anyList("Locations", "Lisbon, Remote", p.locations);
   const industries = anyList("Industries", "fintech, health", p.industries);
   const exclusions = textField("Exclude (companies or keywords, comma separated)", (p.exclusions || []).join(", "));
   const remote = h("select", {}, ["any", "remote", "hybrid", "onsite"].map((v) => h("option", { value: v }, v)));

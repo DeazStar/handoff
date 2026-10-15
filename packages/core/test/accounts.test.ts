@@ -133,9 +133,9 @@ describe("requestAccount", () => {
     expect(throws(() => agent.requestAccount(jobId, { mode: "register" as never, pageUrl: "https://x.com" }))).toMatch(/mode must be/);
     expect(throws(() => agent.requestAccount(jobId, { mode: "signup", pageUrl: "nope" }))).toMatch(/not a web address/);
     expect(throws(() => agent.requestAccount(jobId, { mode: "signup", pageUrl: "https://z.com/s", username: "two words" }))).toMatch(/no spaces/);
-    agent.requestAccount(jobId, { mode: "signup", pageUrl: "https://named.com/s", username: "naod-ararsa" });
+    agent.requestAccount(jobId, { mode: "signup", pageUrl: "https://named.com/s", username: "alex-morgan" });
     const named = (agent.listOpenActions() as any[]).map((x) => JSON.parse(x.payload)).find((p) => p.site === "named.com");
-    expect(named).toMatchObject({ username: "naod-ararsa", mode: "signup" });
+    expect(named).toMatchObject({ username: "alex-morgan", mode: "signup" });
     expect(throws(() => agent.requestAccount(jobId, { mode: "signup", pageUrl: "https://x.com", passwordRules: { minLength: 0 } }))).toMatch(/whole number/);
     const q = (agent.listOpenActions() as any[]).find((x) => x.kind === "signup_needed");
     expect(JSON.parse(q.payload)).toMatchObject({ site: "acme.com", mode: "signup", applyUrl: "https://acme.com/signup" });

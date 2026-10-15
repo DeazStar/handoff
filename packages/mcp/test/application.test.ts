@@ -30,7 +30,7 @@ beforeEach(async () => {
   db = openDb(":memory:");
   dataDir = mkdtempSync(join(tmpdir(), "jobhunt-form-"));
   uploadDir = mkdtempSync(join(tmpdir(), "jobhunt-upload-"));
-  setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", phone: "0911", location: "Addis Ababa, Ethiopia", links: ["https://ada.dev"], languages: [], workAuthorization: "needs sponsorship", requiresSponsorship: true, noticePeriod: "1 week" }, H);
+  setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", phone: "0911", location: "Lisbon, Portugal", links: ["https://ada.dev"], languages: [], workAuthorization: "needs sponsorship", requiresSponsorship: true, noticePeriod: "1 week" }, H);
   setPreferences(db, { roles: [], seniority: [], locations: [], remotePolicy: "any", industries: [], exclusions: [], dailyApplicationLimit: 5, dailyDiscoveryLimit: 5, searchAnySite: true, salaryFloor: 900, salaryTarget: 1400, salaryCeiling: 2000, currency: "USD", salaryPeriod: "month" }, H);
   createHumanApi(db).setStandardAnswer("How did you hear about us?", "The company website");
   const agent = createAgentApi(db);

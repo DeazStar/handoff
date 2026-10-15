@@ -12,11 +12,11 @@ Read this before you write an email, a cover letter, a message to a founder or a
 ## The model message: write like this
 This is the voice the user likes. Match its shape, its plainness and its length, with the facts of the job at hand:
 
-> Hi Brian, I'm applying for the Software Engineer role at Smartcuts. At Rejuive I found why our slowest Neo4j queries were slow: a generator was producing Cypher that joined unrelated matches. I rebuilt them to stop that. At Metamat I led an AI-assisted code generation system for 3D models that cut model creation time by 40%, and I also build full-stack products in TypeScript, Next.js and React. Happy to talk if it looks like a fit.
+> Hi Sam, I'm applying for the Software Engineer role at Acme Labs. At Contoso I found why our slowest reports were slow: a query builder was producing SQL that joined unrelated tables. I rebuilt it to stop that. At Initech I led a code-generation tool for mobile screens that cut build time by 40%, and I also build full-stack products in TypeScript, Next.js and React. Happy to talk if it looks like a fit.
 
 What makes it work, and what to copy:
 1. **First sentence: greeting, then "I'm applying for the <role> at <company>."** Plain and direct. Do not open with a clever line about the company, and never claim what "caught my attention" or "excited" you: the user did not say it, so you may not.
-2. **Then two or three short, concrete sentences**, each one a thing the user did and what came of it, in the words of their facts. One clause of technical detail at most ("a generator was producing Cypher that joined unrelated matches"), then say what was done. No library internals, no second paragraph of how.
+2. **Then two or three short, concrete sentences**, each one a thing the user did and what came of it, in the words of their facts. One clause of technical detail at most ("a query builder was producing SQL that joined unrelated tables"), then say what was done. No library internals, no second paragraph of how.
 3. **Choose the experience that fits this role**, not the whole CV. One or two jobs, one "I also..." line for a second strength if it helps.
 4. **Close short and plain**: "Happy to talk if it looks like a fit." Not "talk through any of it", not "I look forward to hearing from you".
 5. **60 to 100 words.** Contractions are fine ("I'm", "I'd"). No dashes joining clauses.

@@ -252,7 +252,7 @@ A tailoring run reports *Golang* as something the job wants and no fact mentions
 ### F. Make your numbers stronger
 1. **Facts → Ask me for numbers** (or **Needs you → Gaps → Ask for numbers**).
 2. A card shows a bullet with no number: *"Designed the authentication layer."*
-3. Type only the number and what it counts: `about 12,000 patients`. Click **Let Claude word it**.
+3. Type only the number and what it counts: `about 12,000 customers`. Click **Let Claude word it**.
 4. Read the new bullet, edit if you like, click **Save this bullet**. It is updated for every job. No number? **I don't know a number** (it never asks about that bullet again).
 
 ### G. Follow up and track

@@ -124,9 +124,9 @@ describe("preparing a form application", () => {
   it("refuses a long free-text message that breaks the writing guide, and lets a plain one through", () => {
     const s = setup();
     const msg = (answer: string) => s.input({ answers: [{ question: "Message to the founder", answer, kind: "free_text", factIds: [s.fact] }] });
-    const bad = "Hi Carlos, I'm Naod. I built a payments API serving 50000 users in TypeScript and Node.js at my last company. I would need visa sponsorship, and I see you offer it, which is why I am applying here today.";
+    const bad = "Hi Sam, I'm Alex. I built a payments API serving 50000 users in TypeScript and Node.js at my last company. I would need visa sponsorship, and I see you offer it, which is why I am applying here today.";
     expect(throws(() => s.agent.prepareApplication(msg(bad)))).toMatch(/does not follow the writing guide[\s\S]*opens with the user[\s\S]*narrates the application/);
-    const good = "Hi Carlos, I'm applying for the Product Engineer role at Wallets Inc. I built a payments API serving 50000 users, and I would bring that to your product from day one. I'd need visa sponsorship. Happy to talk if it looks like a fit.";
+    const good = "Hi Sam, I'm applying for the Product Engineer role at Wallets Inc. I built a payments API serving 50000 users, and I would bring that to your product from day one. I'd need visa sponsorship. Happy to talk if it looks like a fit.";
     expect(() => s.agent.prepareApplication(msg(good))).not.toThrow();
   });
 

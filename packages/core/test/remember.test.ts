@@ -20,7 +20,7 @@ describe("proposing to keep something the user said", () => {
   it("never lets the polished wording add a number the user did not say", () => {
     const db = openDb(":memory:");
     const agent = createAgentApi(db);
-    const msg = throws(() => agent.proposeRemember(null, { type: "fact", kind: "experience", original: "I made the annotation service faster", polished: "Made the annotation service 40% faster." }));
+    const msg = throws(() => agent.proposeRemember(null, { type: "fact", kind: "experience", original: "I made the reporting service faster", polished: "Made the annotation service 40% faster." }));
     expect(msg).toMatch(/"40%".*did not say/);
     // a number they did say is fine, in any formatting
     expect(() => agent.proposeRemember(null, { type: "fact", kind: "achievement", original: "cut query time from 10 seconds to 2", polished: "Cut query time from 10 seconds to 2 seconds." })).not.toThrow();
@@ -65,7 +65,7 @@ describe("the user's click", () => {
   it("saves a fact under its role, with a note that the user confirmed it", () => {
     const db = openDb(":memory:");
     const agent = createAgentApi(db);
-    const entryId = addEntry(db, { kind: "work", title: "Backend Engineer", organization: "Rejuive" }, H);
+    const entryId = addEntry(db, { kind: "work", title: "Backend Engineer", organization: "Contoso" }, H);
     agent.proposeRemember(null, { type: "fact", kind: "experience", entryId, original: "i used claude code to investigate the slow queries", polished: "Used Claude Code to investigate the slow queries." });
     expect(acceptProposal(db, cards(db)[0]!.id, {}, H)).toEqual({ saved: "fact" });
     const f = listFacts(db, { forJob: null }).find((x) => x.text.startsWith("Used Claude Code"))!;

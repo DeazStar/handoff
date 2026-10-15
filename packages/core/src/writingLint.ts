@@ -8,7 +8,7 @@ export interface WritingIssue {
   fix: string;
 }
 
-// "I'm Naod, a developer", "My name is...", "I am a full-stack engineer". "I'm applying for..." is fine: it is the model opening.
+// "I'm Alex, a developer", "My name is...", "I am a full-stack engineer". "I'm applying for..." is fine: it is the model opening.
 const OPENING = /^\s*(?:(?:[Hh]i|[Hh]ello|[Hh]ey|[Dd]ear)\b[^,\n]{0,40}[,\n]\s*)?(?:(?:I['’]m|I am)\s+(?:an?|the)\b|[Mm]y name is\b|(?:I['’]m|I am)\s+[A-Z][a-z]+\s*[.,])[^.!?\n]{0,60}/;
 const STOCK = /\b(?:caught my (?:attention|eye)|talk through any of it|glad to talk through|is (?:a|an) (?:hard|difficult|fascinating|interesting|tough) problem|(?:is|are) (?:exactly |just )?the kind of|exactly (?:the|what|why)|(?:very |really )?(?:interested|excited|thrilled) (?:in|about|by)|look(?:ing)? forward to hearing)\b[^.!?\n]{0,30}/i;
 const MAX_SENTENCE_WORDS = 35;

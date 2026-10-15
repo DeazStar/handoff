@@ -18,15 +18,15 @@ Read this before you call `draft_email`. The server refuses an email that does n
 - **A cover letter is attached** (the usual case; the server attaches the latest one): the email is only a covering note. **Under 70 words** in the body, **one employer named at most**, **one number at most** besides the years, and it must say the CV and letter are attached. Do not retell the letter: it carries the detail.
 - **No cover letter:** under 110 words, two employers at most, two numbers at most. Write it like the model message in `.claude/writing-guide.md`.
 
-## Good example, with a cover letter (Runway)
+## Good example, with a cover letter (Globex)
 ```json
 {
   "jobId": 26,
   "contactId": 12,
   "blocks": [
     { "text": "Dear Hiring Manager,", "factIds": [], "kind": "boilerplate" },
-    { "text": "I'm applying for the Software Engineer role at Runway.", "factIds": [], "kind": "boilerplate" },
-    { "text": "I'm a software engineer with 3+ years building backend APIs and web products in TypeScript, Node.js, React and PostgreSQL, and I lead backend work on a healthcare platform.", "factIds": [28, 30, 58, 9], "kind": "claim" },
+    { "text": "I'm applying for the Software Engineer role at Globex.", "factIds": [], "kind": "boilerplate" },
+    { "text": "I'm a software engineer with 3+ years building backend APIs and web products in TypeScript, Node.js, React and PostgreSQL, and I lead backend work on a payments platform.", "factIds": [28, 30, 58, 9], "kind": "claim" },
     { "text": "My CV and cover letter are attached. Happy to talk if it looks like a fit.", "factIds": [], "kind": "boilerplate" },
     { "text": "Best regards,", "factIds": [], "kind": "boilerplate" }
   ]
@@ -35,31 +35,31 @@ Read this before you call `draft_email`. The server refuses an email that does n
 It reads, after the server adds the signature:
 > Dear Hiring Manager,
 >
-> I'm applying for the Software Engineer role at Runway. I'm a software engineer with 3+ years building backend APIs and web products in TypeScript, Node.js, React and PostgreSQL, and I lead backend work on a healthcare platform. My CV and cover letter are attached. Happy to talk if it looks like a fit.
+> I'm applying for the Software Engineer role at Globex. I'm a software engineer with 3+ years building backend APIs and web products in TypeScript, Node.js, React and PostgreSQL, and I lead backend work on a payments platform. My CV and cover letter are attached. Happy to talk if it looks like a fit.
 >
 > Best regards,
-> Naod Ararsa Ulu
+> Alex Morgan
 > you@example.com
 
-## Good example, no cover letter (Smartcuts)
-> Dear Brian,
+## Good example, no cover letter (Acme Labs)
+> Dear Sam,
 >
-> I'm applying for the Software Engineer role at Smartcuts. At Rejuive I found why our slowest Neo4j queries were slow: a generator was producing Cypher that joined unrelated matches. I rebuilt them to stop that. At Metamat I led an AI-assisted code generation system for 3D models that cut model creation time by 40%. My CV is attached. Happy to talk if it looks like a fit.
+> I'm applying for the Software Engineer role at Acme Labs. At Contoso I found why our slowest reports were slow: a query builder was producing SQL that joined unrelated tables. I rebuilt it to stop that. At Initech I led a code-generation tool for mobile screens that cut build time by 40%. My CV is attached. Happy to talk if it looks like a fit.
 >
 > Best regards,
 
 ## Bad example, and what is wrong in it
 > **Dear hiring team,** *(wrong greeting: it must be exactly "Dear Hiring Manager," or "Dear <first name>,")*
 >
-> I'm applying for the Software Engineer role at Runway. **At MSS Technologies I built a full-stack e-commerce platform in TypeScript, Node.js, Next.js and React, and at Medukul I lead backend work on a healthcare platform. At Rejuive I developed backend APIs that cut query time by more than 60 percent.** *(retells the cover letter: three employers; with a letter attached, name one at most)* My CV and cover letter are attached.
+> I'm applying for the Software Engineer role at Globex. **At Fabrikam I built a full-stack e-commerce platform in TypeScript, Node.js, Next.js and React, and at Northwind I lead backend work on a payments platform. At Contoso I developed backend APIs that cut query time by more than 60 percent.** *(retells the cover letter: three employers; with a letter attached, name one at most)* My CV and cover letter are attached.
 >
-> **Best regards,** Naod Ararsa Ulu **+251...** *(never write a name or phone: the server adds the name and email)*
+> **Best regards,** Alex Morgan **+351...** *(never write a name or phone: the server adds the name and email)*
 
 ## The hard rules the server enforces
 - The first block is the exact greeting, the last block is exactly `Best regards,`.
 - The body starts `I'm applying for the <role> at <company>.`
 - Word limit (70 with a letter, 110 without), employer limit (1 or 2), number limit (1 or 2), and "attached" must appear when there is a letter.
-- No sentence that repeats the posting ("The posting...", "You are building..."), no filler or stock lines, no sentence over 35 words, no first-person intro ("I'm Naod"), no claimed feelings.
+- No sentence that repeats the posting ("The posting...", "You are building..."), no filler or stock lines, no sentence over 35 words, no first-person intro ("I'm Alex"), no claimed feelings.
 - Every claim cites facts and each number appears in them.
 
 ## Before you save

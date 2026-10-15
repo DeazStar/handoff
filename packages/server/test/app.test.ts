@@ -154,7 +154,7 @@ describe("api", () => {
     expect(await (await post("/api/metric-gaps", {})).json()).toEqual({ added: 1, left: 0 });
     const card = (await (await get("/api/actions")).json()).find((a: any) => a.payload.metric);
     expect((await post(`/api/actions/${card.id}/confirm-metric`, { text: "no digits here" })).status).toBe(400);
-    expect((await post(`/api/actions/${card.id}/confirm-metric`, { text: "Designed the login layer for 12000 patients" })).status).toBe(200);
+    expect((await post(`/api/actions/${card.id}/confirm-metric`, { text: "Designed the login layer for 12000 customers" })).status).toBe(200);
     expect(human.listFacts().find((f) => f.text.includes("12000"))).toBeTruthy();
   });
 
@@ -208,7 +208,7 @@ describe("settings api", () => {
     const res = await fetch(base + "/api/preferences", {
       method: "PUT", headers: json,
       body: JSON.stringify({
-        roles: [], seniority: ["mid", "senior", " "], locations: ["Addis Ababa"], remotePolicy: "any",
+        roles: [], seniority: ["mid", "senior", " "], locations: ["Lisbon"], remotePolicy: "any",
         industries: [], exclusions: ["BadCorp"], salaryFloor: "1000", salaryTarget: "", salaryCeiling: "2000", currency: "USD",
         dailyApplicationLimit: "5", dailyDiscoveryLimit: "8",
       }),
@@ -334,7 +334,7 @@ describe("document files", () => {
 
 describe("weights and guidance api", () => {
   it("saves an entry's weight and the CV guidance, and rejects a bad weight", async () => {
-    const id = (await (await post("/api/cv/entries", { kind: "work", title: "Backend Engineer", organization: "Rejuive", weight: "lead" })).json()).id;
+    const id = (await (await post("/api/cv/entries", { kind: "work", title: "Backend Engineer", organization: "Contoso", weight: "lead" })).json()).id;
     const cv = await (await get("/api/cv")).json();
     expect(cv.entries.find((e: any) => e.id === id).weight).toBe("lead");
     expect((await post("/api/cv/entries", { kind: "work", title: "x", weight: "huge" })).status).toBe(400);
@@ -360,14 +360,14 @@ describe("country priority api", () => {
   it("saves the list and each entry's country, and the preview follows the priority", async () => {
     const put = (path: string, body: unknown) => fetch(base + path, { method: "PUT", headers: json, body: JSON.stringify(body) });
     await put("/api/profile", { fullName: "Ada", links: [], languages: [] });
-    const eth = (await (await post("/api/cv/entries", { kind: "work", title: "Local job", country: " Ethiopia " })).json()).id;
+    const eth = (await (await post("/api/cv/entries", { kind: "work", title: "Local job", country: " Portugal " })).json()).id;
     const us = (await (await post("/api/cv/entries", { kind: "work", title: "US job", country: "United States" })).json()).id;
     await post(`/api/cv/entries/${eth}/bullets`, { text: "Did local work" });
     await post(`/api/cv/entries/${us}/bullets`, { text: "Did US work" });
     const prefs = { roles: [], remotePolicy: "any", dailyApplicationLimit: 5, dailyDiscoveryLimit: 5, countryPriority: ["United States", " ", "united states", "Netherlands"] };
     expect((await put("/api/preferences", prefs)).status).toBe(200);
     expect((await (await get("/api/preferences")).json()).countryPriority).toEqual(["United States", "Netherlands"]);
-    expect((await (await get("/api/cv")).json()).entries.find((e: any) => e.id === eth).country).toBe("Ethiopia");
+    expect((await (await get("/api/cv")).json()).entries.find((e: any) => e.id === eth).country).toBe("Portugal");
     expect((await get("/api/cv/preview.pdf")).status).toBe(200); // the order it builds would be refused if it broke the rule
   });
 });
@@ -377,7 +377,7 @@ describe("pick lists", () => {
   it("offers the country and work-type choices, and refuses anything off the list", async () => {
     const lists = await (await get("/api/lists")).json();
     expect(lists.countries).toContain("United States");
-    expect(lists.countries).toContain("Ethiopia");
+    expect(lists.countries).toContain("Portugal");
     expect(lists.employmentTypes).toContainEqual({ value: "full_time", label: "Full-time" });
     expect(lists.employmentTypes.map((t: any) => t.value)).toEqual(["full_time", "part_time", "contract", "freelance"]);
 

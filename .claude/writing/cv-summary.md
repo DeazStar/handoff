@@ -25,10 +25,10 @@ Read this before you write the `summary` and the `headline` of a CV. The facts r
 > Full-stack Software Engineer with 3+ years building web products in TypeScript, Node.js, React, Next.js and PostgreSQL. Experienced in REST API design, authentication and database design, and in building features from the API to the interface. Known for owning backend systems from design through deployment and for optimizing performance from the database to the interface in remote startup teams.
 
 ## Bad examples, and why
-- *"Rebuilt the generated queries behind a Neo4j annotation platform around Cypher CALL subqueries, removing the Cartesian product."* A result with technical internals, copied from a bullet. The summary is about the person, and the server refuses it (a number, and a repeat of a bullet).
-- *"Has built e-commerce, distributed systems and AI annotation tooling."* A list of three product types: vague breadth with no outcome. What was built belongs in the experience section.
+- *"Rebuilt the generated queries behind a reporting platform around SQL window functions, removing the Cartesian join."* A result with technical internals, copied from a bullet. The summary is about the person, and the server refuses it (a number, and a repeat of a bullet).
+- *"Has built e-commerce, distributed systems and AI data tooling."* A list of three product types: vague breadth with no outcome. What was built belongs in the experience section.
 - *"Cross-stack engineer..."* Nobody searches for that. Use the standard word the posting uses ("full-stack").
-- *"I lead backend work on a healthcare platform..."* First person. A CV summary has none.
+- *"I lead backend work on a payments platform..."* First person. A CV summary has none.
 - *"Passionate engineer with robust experience..."* Filler. Say what the user did.
 - *"Known for cutting costs..."* when no fact says it: an invented trait.
 

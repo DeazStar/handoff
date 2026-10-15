@@ -18,19 +18,19 @@ Read this before you call `save_cover_letter`. You write only the body paragraph
 - **No claimed feelings** ("passionate", "eager", "excited", "huge passion", "drawn to"), no "I am writing to express my interest", no "I look forward to hearing from you".
 - **Short sentences**, under 30 words, one idea each. No dashes joining clauses.
 
-## Good example (Runway, the user's facts; 194 words)
-> I'm applying for the Software Engineer role at Runway. I'm a software engineer with 3+ years building backend APIs and web products in TypeScript, Node.js, React and PostgreSQL. Your web app is built in React and TypeScript, which I used to build a full-stack e-commerce platform at MSS Technologies. There I also optimized server logic and database interactions and improved UI performance by 20%.
+## Good example (Globex, the user's facts; 194 words)
+> I'm applying for the Software Engineer role at Globex. I'm a software engineer with 3+ years building backend APIs and web products in TypeScript, Node.js, React and PostgreSQL. Your web app is built in React and TypeScript, which I used to build a full-stack e-commerce platform at Fabrikam. There I also optimized server logic and database interactions and improved UI performance by 20%.
 >
-> I lead backend work at Medukul, a healthcare platform that connects patients with doctors across Nigeria. I design its REST APIs and authentication for sensitive patient data, own the database schema and performance, and manage the CI/CD and Docker deployments that keep the system reliable for a growing user base.
+> I lead backend work at Northwind, a payments platform that connects merchants with banks across Kenya. I design its REST APIs and authentication for sensitive payment data, own the database schema and performance, and manage the CI/CD and Docker deployments that keep the system reliable for a growing user base.
 >
-> At Rejuive I developed the backend APIs for data ingestion and for integration with AI annotation pipelines, and cut query time by more than 60 percent. I also put input validation and access control in place across the services. As a freelancer I built a mobile and web app in Node.js and Flutter for a government organization, so mobile work is familiar to me.
+> At Contoso I developed the backend APIs for data ingestion and for integration with reporting pipelines, and cut query time by more than 60 percent. I also put input validation and access control in place across the services. As a freelancer I built a mobile and web app in Node.js and Flutter for a city council, so mobile work is familiar to me.
 >
 > Happy to talk if it looks like a fit. Thank you for your time and consideration.
 
 ## Bad example, and what is wrong in it
-> I'm applying for the Software Engineer role at Runway. **You are building a tool for teams to track and automate their mobile app releases, with a Go backend and a React and TypeScript web app.** *(repeats the posting, and points at the Go gap)* At MSS Technologies I built a full-stack e-commerce platform... At Medukul I lead backend work...
+> I'm applying for the Software Engineer role at Globex. **You are building a tool for teams to track and automate their mobile app releases, with a Go backend and a React and TypeScript web app.** *(repeats the posting, and points at the Go gap)* At Fabrikam I built a full-stack e-commerce platform... At Northwind I lead backend work...
 >
-> **The role covers release automation and third-party integrations.** *(repeats the posting)* **At Medukul I manage the deployment workflows with CI/CD and Docker...** *(Medukul again; a forced match: managing deployments is not building release automation)*
+> **The role covers release automation and third-party integrations.** *(repeats the posting)* **At Northwind I manage the deployment workflows with CI/CD and Docker...** *(Northwind again; a forced match: managing deployments is not building release automation)*
 >
 > **Mobile experience is a bonus for you.** *(talks about the wish list)* I built a mobile and web application... 99.99% accuracy *(a number with no context)*.
 >

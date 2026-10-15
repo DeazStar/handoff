@@ -46,7 +46,7 @@ beforeEach(async () => {
   db = openDb(":memory:");
   dataDir = mkdtempSync(join(tmpdir(), "jobhunt-cover-"));
   uploadDir = mkdtempSync(join(tmpdir(), "jobhunt-cover-up-"));
-  setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", phone: "0911", location: "Addis Ababa, Ethiopia", links: ["https://ada.dev"], languages: [] }, H);
+  setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", phone: "0911", location: "Lisbon, Portugal", links: ["https://ada.dev"], languages: [] }, H);
   const agent = createAgentApi(db);
   companyId = agent.upsertCompany({ name: "Acme", domain: "acme.example" });
   jobId = agent.addCandidateJob({ title: "Backend Engineer", url: "https://acme.example/j/1", canonicalUrl: "https://acme.example/j/1", companyId }).id;

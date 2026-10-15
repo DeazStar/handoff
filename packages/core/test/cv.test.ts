@@ -239,7 +239,7 @@ describe("country priority", () => {
   const withCountries = () => {
     const s = setup();
     const set = (id: number, country: string) => updateEntry(s.db, id, { ...listEntries(s.db).find((e) => e.id === id)!, country }, H);
-    set(s.acme, "Ethiopia");
+    set(s.acme, "Portugal");
     set(s.beta, "United States");
     setPreferences(s.db, prefs([" United States ", "Netherlands", "united states"]), H);
     return s;
@@ -253,7 +253,7 @@ describe("country priority", () => {
 
   it("refuses a plan that lists a lower-priority country first, and says which", () => {
     const s = withCountries();
-    expect(() => prepareCv(s.db, plan(s, [s.acme, s.beta]), null)).toThrow(/"Backend Engineer at Acme" \(Ethiopia\) is listed before "Engineer at Beta" \(United States\)/);
+    expect(() => prepareCv(s.db, plan(s, [s.acme, s.beta]), null)).toThrow(/"Backend Engineer at Acme" \(Portugal\) is listed before "Engineer at Beta" \(United States\)/);
     expect(prepareCv(s.db, plan(s, [s.beta, s.acme]), null).cv.experience.map((e) => e.entry.id)).toEqual([s.beta, s.acme]);
   });
 
@@ -322,8 +322,8 @@ describe("employment type priority", () => {
     const s = withTypes();
     const set = (id: number, country: string) => updateEntry(s.db, id, { ...listEntries(s.db).find((e) => e.id === id)!, country }, H);
     set(s.acme, "United States");
-    set(s.beta, "Ethiopia");
-    setPreferences(s.db, { ...prefs(["full_time", "freelance"]), countryPriority: ["United States", "Ethiopia"] }, H);
+    set(s.beta, "Portugal");
+    setPreferences(s.db, { ...prefs(["full_time", "freelance"]), countryPriority: ["United States", "Portugal"] }, H);
     expect(prepareCv(s.db, plan(s, [s.acme, s.beta]), null).cv.experience.map((e) => e.entry.id)).toEqual([s.acme, s.beta]);
   });
 });

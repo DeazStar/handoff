@@ -64,8 +64,8 @@ describe("verifyContactFromBrowser", () => {
 
 describe("the job's own posting page", () => {
   const deps = { hasMail: async () => true };
-  const posting = "https://safepay.notion.site/Back-End-Engineer-16b8";
-  const base = { email: "hiring@getsafepay.com", sourceUrl: posting, quote: "Send your CV to hiring@getsafepay.com", companyDomain: "getsafepay.pk" };
+  const posting = "https://globex.notion.site/Back-End-Engineer-16b8";
+  const base = { email: "hiring@getglobex.com", sourceUrl: posting, quote: "Send your CV to hiring@getglobex.com", companyDomain: "getglobex.pk" };
 
   it("is accepted as the company's page, even on another host and for another company domain", async () => {
     expect(await verifyContactFromBrowser({ ...base, postingUrl: `${posting}/?pvs=4#top` }, deps)).toMatchObject({ ok: true, rule: "posting_page" });
@@ -73,8 +73,8 @@ describe("the job's own posting page", () => {
 
   it("does not apply to any other page, and still refuses free mail and a missing quote", async () => {
     expect((await verifyContactFromBrowser(base, deps)).ok).toBe(false); // no posting known
-    expect((await verifyContactFromBrowser({ ...base, postingUrl: "https://safepay.notion.site/Other-Job-1" }, deps)).ok).toBe(false);
-    const free = await verifyContactFromBrowser({ ...base, email: "safepay.hr@gmail.com", quote: "mail safepay.hr@gmail.com", postingUrl: posting }, deps);
+    expect((await verifyContactFromBrowser({ ...base, postingUrl: "https://globex.notion.site/Other-Job-1" }, deps)).ok).toBe(false);
+    const free = await verifyContactFromBrowser({ ...base, email: "globex.hr@gmail.com", quote: "mail globex.hr@gmail.com", postingUrl: posting }, deps);
     expect(free).toMatchObject({ ok: false, reason: expect.stringMatching(/free-mail/) });
     expect((await verifyContactFromBrowser({ ...base, quote: "Send your CV to us", postingUrl: posting }, deps)).ok).toBe(false);
     expect((await verifyContactFromBrowser({ ...base, postingUrl: posting }, { hasMail: async () => false })).ok).toBe(false);

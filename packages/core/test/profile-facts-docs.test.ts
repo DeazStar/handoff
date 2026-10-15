@@ -5,7 +5,7 @@ import {
 } from "../src/index.js";
 
 const prefs = {
-  roles: ["Backend Engineer"], seniority: ["mid"], locations: ["Addis Ababa"], remotePolicy: "any" as const,
+  roles: ["Backend Engineer"], seniority: ["mid"], locations: ["Lisbon"], remotePolicy: "any" as const,
   industries: [], exclusions: [], salaryFloor: 1000, salaryTarget: 1500, salaryCeiling: 2000,
   currency: "USD", dailyApplicationLimit: 5, dailyDiscoveryLimit: 10, searchAnySite: true, countryPriority: [], bccSelf: true, consentDefault: "none" as const, priorityMode: "remote_first" as const, coverLetters: "auto" as const, cookieBanners: "accept" as const, defaultSkillLevel: undefined, questionMode: "batch" as const, questionOverrides: {}, autoMarkReplied: true, followUpDays: 7, maxFollowUps: 1, noResponseDays: 21, replySnippetDays: 90, replyCheckMinutes: 0, researchMinScore: 7, researchScope: "all" as const, batchSize: 10, employmentPriority: [],
 };

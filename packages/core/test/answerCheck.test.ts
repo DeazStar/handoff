@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { checkObserved, checkProfileAnswer, checkStandardAnswer, resolveSources, openDb, setProfile, setPreferences, createAgentApi, createHumanApi, addFact, saveDocument, type Profile } from "../src/index.js";
 
 const profile: Profile = {
-  fullName: "Naod Ararsa Ulu", email: "naod@example.com", phone: "+251 911 234 567", location: "Addis Ababa, Ethiopia",
-  links: ["https://www.linkedin.com/in/naod/", "https://github.com/naod"], languages: ["English", "Amharic"],
+  fullName: "Alex Morgan", email: "alex@example.com", phone: "+351 913 579 246", location: "Lisbon, Portugal",
+  links: ["https://www.linkedin.com/in/alex/", "https://github.com/alex"], languages: ["English", "Portuguese"],
   workAuthorization: "Needs visa sponsorship", noticePeriod: "2 weeks", requiresSponsorship: true,
 };
 const saved = (label: string, answer: string) => ({ id: 1, label, answer });
@@ -26,22 +26,22 @@ describe("sources", () => {
 describe("profile answers", () => {
   const ok = (q: string, a: string, f: any[]) => checkProfileAnswer(q, a, f, profile).check;
   it("verifies exact values and parts of them", () => {
-    expect(ok("Full name", "Naod Ararsa Ulu", ["fullName"])).toBe("verified");
-    expect(ok("First name", "Naod", ["fullName"])).toBe("verified");
-    expect(ok("Last name", "Ulu", ["fullName"])).toBe("verified");
-    expect(ok("Email", "NAOD@example.com", ["email"])).toBe("verified");
-    expect(ok("City", "Addis Ababa", ["location"])).toBe("verified");
-    expect(ok("Country", "Ethiopia", ["location"])).toBe("verified");
-    expect(ok("Phone", "0911234567", ["phone"])).toBe("verified");
-    expect(ok("Phone", "251911234567", ["phone"])).toBe("verified");
-    expect(ok("LinkedIn", "linkedin.com/in/naod", ["links"])).toBe("verified");
-    expect(ok("Languages", "Amharic", ["languages"])).toBe("verified");
+    expect(ok("Full name", "Alex Morgan", ["fullName"])).toBe("verified");
+    expect(ok("First name", "Alex", ["fullName"])).toBe("verified");
+    expect(ok("Last name", "Morgan", ["fullName"])).toBe("verified");
+    expect(ok("Email", "ALEX@example.com", ["email"])).toBe("verified");
+    expect(ok("City", "Lisbon", ["location"])).toBe("verified");
+    expect(ok("Country", "Portugal", ["location"])).toBe("verified");
+    expect(ok("Phone", "0913579246", ["phone"])).toBe("verified");
+    expect(ok("Phone", "351913579246", ["phone"])).toBe("verified");
+    expect(ok("LinkedIn", "linkedin.com/in/alex", ["links"])).toBe("verified");
+    expect(ok("Languages", "Portuguese", ["languages"])).toBe("verified");
     expect(ok("Notice period", "2 weeks", ["noticePeriod"])).toBe("verified");
   });
   it("flags, and does not refuse, an answer that differs from its source", () => {
     const r = checkProfileAnswer("Email", "someone@else.com", ["email"], profile);
     expect(r.check).toBe("differs");
-    expect(r.note).toMatch(/naod@example.com/);
+    expect(r.note).toMatch(/alex@example.com/);
     expect(ok("Phone", "12345678", ["phone"])).toBe("differs");
   });
   it("answers a sponsorship question from the sponsorship setting", () => {
@@ -103,10 +103,10 @@ describe("through prepare_application", () => {
   it("saves each answer with its check, and a differing answer is saved, not refused", () => {
     const { agent, jobId, prepare } = setup();
     prepare([
-      { question: "Email", answer: "naod@example.com", kind: "profile", from: ["profile:email"] },
+      { question: "Email", answer: "alex@example.com", kind: "profile", from: ["profile:email"] },
       { question: "Phone", answer: "999 000 1111", kind: "profile", from: ["profile:phone"] },
       { question: "Gender", answer: "Female", kind: "standard", from: ["standard:Gender"] },
-      { question: "Name", answer: "Naod Ararsa Ulu", kind: "profile", from: ["profile:fullName"], observed: "Naod" },
+      { question: "Name", answer: "Alex Morgan", kind: "profile", from: ["profile:fullName"], observed: "Alex" },
       { question: "Why us?", answer: "I built a payments API.", kind: "free_text", factIds: [1] },
     ]);
     const a = agent.getApplication(jobId)!.answers;
@@ -116,7 +116,7 @@ describe("through prepare_application", () => {
   });
   it("refuses only an answer that names no real source", () => {
     const { prepare } = setup();
-    expect(() => prepare([{ question: "Email", answer: "naod@example.com", kind: "profile" }])).toThrow(/must name where it comes from/);
+    expect(() => prepare([{ question: "Email", answer: "alex@example.com", kind: "profile" }])).toThrow(/must name where it comes from/);
     expect(() => prepare([{ question: "Pronouns", answer: "he/him", kind: "standard", from: ["standard:Pronouns"] }])).toThrow(/no saved standard answer called "Pronouns"/);
   });
   it("tells the user in the queue how many answers differ", () => {
@@ -146,7 +146,7 @@ describe("sponsorship read from the work authorization text", async () => {
   });
   it("lets the setting win, and checks a form answer against the text when the setting is not said", () => {
     expect(e("needs sponsership", false)).toEqual({ value: false, from: "setting" });
-    const p = { fullName: "Naod", links: [], languages: [], workAuthorization: "needs sponsership" };
+    const p = { fullName: "Alex", links: [], languages: [], workAuthorization: "needs sponsership" };
     expect(checkProfileAnswer("Will you require visa sponsorship?", "Yes", ["requiresSponsorship"], p)).toMatchObject({ check: "verified", note: expect.stringMatching(/work authorization text/) });
     expect(checkProfileAnswer("Will you require visa sponsorship?", "No", ["requiresSponsorship"], p)).toMatchObject({ check: "differs" });
     expect(resolveSources(["profile:requiresSponsorship"], "profile", { profile: p, standard: [] })).toMatchObject({ ok: true });

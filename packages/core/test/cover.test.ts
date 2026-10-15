@@ -13,7 +13,7 @@ const para = (text: string, factIds: number[] = []) => ({ text, factIds });
 
 function setup() {
   const db = openDb(":memory:");
-  setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", phone: "0911", location: "Addis Ababa, Ethiopia", links: ["https://ada.dev"], languages: [] }, H);
+  setProfile(db, { fullName: "Ada Lovelace", email: "ada@example.com", phone: "0911", location: "Lisbon, Portugal", links: ["https://ada.dev"], languages: [] }, H);
   setPreferences(db, prefs(), H);
   const agent = createAgentApi(db);
   const co = agent.upsertCompany({ name: "Acme", domain: "acme.example" });

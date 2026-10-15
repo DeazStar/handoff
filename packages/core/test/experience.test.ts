@@ -6,7 +6,7 @@ const NOW = new Date(Date.UTC(2026, 9, 10)); // 10 October 2026
 
 describe("experienceSummary", () => {
   it("is the months covered by dated roles, so your own roles come to 3 years 7 months", () => {
-    // MSS Technologies, Medukul, Rejuive, Metamat, SingularityNET, and an undated freelance entry
+    // Fabrikam, Northwind, Contoso, Initech, Hooli, and an undated freelance entry
     const r = experienceSummary([w(undefined), w("2023-03", "2023-07"), w("2023-08", undefined, true), w("2024-08", undefined, true), w("2024-10", "2025-10"), w("2025-06", undefined, true)], NOW);
     expect(r).toEqual({ years: 3, months: 44, since: "2023-03", undatedEntries: 1 });
   });
@@ -27,7 +27,7 @@ describe("experienceSummary", () => {
 });
 
 describe("answering a years-of-experience question", () => {
-  const profile: Profile = { fullName: "Naod", links: [], languages: [] };
+  const profile: Profile = { fullName: "Alex", links: [], languages: [] };
   const derived = { experienceYears: 3, experienceMonths: 44 };
   const ok = (answer: string) => checkProfileAnswer("Years of experience", answer, ["experienceYears"], profile, derived);
   it("is a source only when the years can be calculated", () => {

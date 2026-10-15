@@ -5,7 +5,7 @@ const rules = (t: string) => lintWriting(t).map((i) => i.rule);
 
 describe("the writing checks", () => {
   it("refuses the exact message that opened with the user, listed tools and commented on sponsorship", () => {
-    const bad = "Hi Carlos, I'm Naod. I built a platform in TypeScript. I would need visa sponsorship, and I see you offer it.";
+    const bad = "Hi Sam, I'm Alex. I built a platform in TypeScript. I would need visa sponsorship, and I see you offer it.";
     expect(rules(bad)).toEqual(expect.arrayContaining(["opens with the user", "narrates the application"]));
   });
 
@@ -19,10 +19,10 @@ describe("the writing checks", () => {
   });
 
   it("accepts the model message and the plain opener 'I'm applying for', and refuses the stiff and stock versions", () => {
-    const model = "Hi Brian, I'm applying for the Software Engineer role at Smartcuts. At Rejuive I found why our slowest Neo4j queries were slow: a generator was producing Cypher that joined unrelated matches. I rebuilt them to stop that. At Metamat I led an AI-assisted code generation system for 3D models that cut model creation time by 40%, and I also build full-stack products in TypeScript, Next.js and React. Happy to talk if it looks like a fit.";
+    const model = "Hi Sam, I'm applying for the Software Engineer role at Acme Labs. At Contoso I found why our slowest reports were slow: a query builder was producing SQL that joined unrelated tables. I rebuilt it to stop that. At Initech I led a code-generation tool for mobile screens that cut build time by 40%, and I also build full-stack products in TypeScript, Next.js and React. Happy to talk if it looks like a fit.";
     expect(lintWriting(model)).toEqual([]);
-    expect(rules("Hi Carlos, I'm Naod. I built a platform.")).toContain("opens with the user");
-    expect(rules("Hi Carlos, I'm a full-stack engineer who builds platforms.")).toContain("opens with the user");
+    expect(rules("Hi Sam, I'm Alex. I built a platform.")).toContain("opens with the user");
+    expect(rules("Hi Sam, I'm a full-stack engineer who builds platforms.")).toContain("opens with the user");
     expect(rules("Finding page elements is a hard problem, and it is the part that caught my attention.")).toContain("stock line");
     expect(rules("A small team building a platform is the kind of role I'm looking for.")).toContain("stock line");
     expect(rules("I would be glad to talk through any of it.")).toContain("stock line");
@@ -30,7 +30,7 @@ describe("the writing checks", () => {
   });
 
   it("accepts a message that opens with them and says things plainly", () => {
-    const good = "Hi Carlos, I'm applying for the Product Engineer role at Fractional. I lead backend at Medukul and own its REST APIs, authentication and database design. At Rejuive I fixed the slowest queries on a Neo4j platform. I'd need visa sponsorship. Happy to talk if it looks like a fit.";
+    const good = "Hi Sam, I'm applying for the Product Engineer role at Acme Labs. I lead backend at Northwind and own its REST APIs, authentication and database design. At Contoso I fixed the slowest queries on a PostgreSQL platform. I'd need visa sponsorship. Happy to talk if it looks like a fit.";
     expect(lintWriting(good)).toEqual([]);
   });
 
@@ -40,7 +40,7 @@ describe("the writing checks", () => {
   });
 
   it("lists every problem of every part in one error", () => {
-    expect(() => assertWellWritten(["I'm Naod, a developer.", "I hope this email finds you well."], "The email")).toThrow(/part 1[\s\S]*part 2/);
+    expect(() => assertWellWritten(["I'm Alex, a developer.", "I hope this email finds you well."], "The email")).toThrow(/part 1[\s\S]*part 2/);
     expect(() => assertWellWritten(["Fine, plain text."], "The email")).not.toThrow();
   });
 });
