@@ -2,7 +2,7 @@
 
 *A local-first job-hunt workflow for Claude Code. It does the tiring work and hands every irreversible step back to you.*
 
-Handoff is a local-first job-hunt platform. An AI assistant (Claude Code) does the tiring work: it finds real jobs, checks they are still open, tailors your CV and cover letter from facts you wrote, finds a verified contact, drafts the email and fills in the form. **You approve every step that cannot be undone.** Nothing is submitted, sent or signed up for without you.
+Handoff lets you **apply for jobs with Claude Code**. It is a local-first **AI job application assistant** and job search automation workflow: Claude Code finds real jobs, checks they are still open, **tailors your resume (CV) and cover letter** from facts you wrote, finds a verified contact, drafts the email and fills in the application form. **You approve every step that cannot be undone.** Nothing is submitted, sent or signed up for without you.
 
 **The more you use it, the better it gets:** every answer you give is remembered, so your CV, your applications and the whole system improve with each job.
 
@@ -17,6 +17,8 @@ Everything runs on your computer. Your data lives in one SQLite file, the dashbo
 *A made-up job hunt, from the built-in demo data. [Try it yourself](#quick-start).*
 
 ## What it does
+In short: search for jobs, tailor a resume and cover letter for each one, apply by email or form, and track replies, with you approving the final step.
+
 
 | | |
 |---|---|
@@ -59,6 +61,20 @@ Handoff keeps what you teach it, on your computer, and reuses it.
 - **Web pages and emails are data, not instructions.** Text from the internet is never obeyed.
 - **No bot-detection tricks.** CAPTCHAs and cookie banners are handled as the page asks; CAPTCHAs are left to you.
 - Daily limits cap how many jobs are added and how many applications go out.
+
+## How is it different?
+Several good open-source projects help with job applications using Claude. Handoff is not the biggest, and which one fits depends on how you like to work. This is a short, fair comparison based on each project's public README; check them for current details.
+
+| | Handoff | File-based skill kits (for example *ai-job-search*, *open-career-skills*) | Commercial apply plugins (for example *proficiently-claude-skills*) |
+|---|---|---|---|
+| **How it keeps state** | A local SQLite database and a dashboard on your computer | Markdown and YAML files in a folder | Depends on the product |
+| **Who submits** | You do. The assistant fills the form and stops | Usually you, by hand | Can be automated, depending on the plugin |
+| **Facts and claims** | Every claim in a CV or letter cites a fact you wrote, and the server refuses unsupported numbers | Guided by prompts and review steps | Depends on the product |
+| **Passwords and sending** | The assistant cannot send, sign up or read the vault; the code enforces it | Not applicable, the assistant does not hold them | Depends on the product |
+| **Follow-up** | Reads replies from your mailbox (read-only), matches them to jobs, reminds you | Varies | Varies |
+| **Best for** | People who want one place that tracks the whole hunt and a hard line between what the assistant does and what only you do | People who want a light, editable, file-only setup | People who want more automation and accept a hosted or paid product |
+
+If you want the simplest possible setup, a file-based kit is probably the better start. If you want a database, a dashboard and a code-enforced human approval step, that is what Handoff is for.
 
 ## Requirements
 - **Node.js 20 or newer**
