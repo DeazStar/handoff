@@ -10,7 +10,7 @@ Everything runs on your computer. Your data lives in one SQLite file, the dashbo
 
 > **Status:** early. Expect rough edges, and read the [limitations](#limitations) before relying on it.
 
-> **Who it is for, today:** software developers. The CV rules, skill groups, writing examples and job search are tuned for software engineering roles. The plan is to make Handoff generic, so it works for any kind of job: see the [roadmap](#roadmap).
+> **Who it is for, today:** developers. The CV rules, skill groups, writing examples and job search are tuned for developer roles. The plan is to make Handoff generic, so it works for any kind of job: see the [roadmap](#roadmap).
 
 ## What it does
 
