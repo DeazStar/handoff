@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to apply for jobs with Claude Code | Handoff</title>
+<meta name="description" content="Step by step: use Claude Code to find jobs, tailor your resume and cover letter, draft emails and fill forms, while you approve every irreversible step.">
+<link rel="canonical" href="https://deazstar.github.io/handoff/apply-for-jobs-with-claude-code.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="How to apply for jobs with Claude Code | Handoff">
+<meta property="og:description" content="Step by step: use Claude Code to find jobs, tailor your resume and cover letter, draft emails and fill forms, while you approve every irreversible step.">
+<meta property="og:url" content="https://deazstar.github.io/handoff/apply-for-jobs-with-claude-code.html">
+<meta property="og:image" content="https://deazstar.github.io/handoff/images/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<nav><a href="./">Home</a><a href="apply-for-jobs-with-claude-code.html">Apply with Claude Code</a><a href="how-it-works.html">How it works</a><a href="faq.html">FAQ</a><a href="https://github.com/DeazStar/handoff">GitHub</a></nav>
+<h1>How to apply for jobs with Claude Code</h1>
+<p class="lead">Claude Code can do most of the tiring work of a job search. This guide shows a safe way to do it with Handoff, an open-source workflow where you approve every step that cannot be undone.</p>
+<h2>What Claude Code can and cannot do for a job search</h2>
+<p>On its own, Claude Code can read a job post, compare it with your experience and write a draft. What it should not do unsupervised is send email, submit forms or invent achievements. Handoff adds the missing structure: a local database of facts you wrote, a dashboard, and a hard line between what the assistant does and what only you do.</p>
+<h2>The steps</h2>
+<ol>
+<li><strong>Save your facts once.</strong> Enter your jobs, projects, education, skills and true statements about your work in the dashboard. Everything the assistant writes comes only from these.</li>
+<li><strong>Find jobs.</strong> <code>/discover</code> searches the sites you choose, opens each page, checks that the job is still open and scores it against your settings. <code>/add &lt;link&gt;</code> takes links you already have.</li>
+<li><strong>Tailor your resume and cover letter.</strong> <code>/tailor</code> builds a CV PDF and <code>/cover</code> a letter. Every claim cites a fact and every number must match one. Skills a job wants that you do not have show up as gaps and are never covered up. Each CV gets an ATS-style score with its missing keywords.</li>
+<li><strong>Apply by email.</strong> <code>/email</code> finds a contact address that is really on the company's page, checks that its domain accepts mail, and drafts the message. You edit and send it from the dashboard.</li>
+<li><strong>Apply by form.</strong> <code>/apply</code> fills the application form in a real browser and leaves it open. You check it and press Submit yourself.</li>
+<li><strong>Follow up.</strong> The dashboard reads your mailbox (read-only) for replies, matches them to your jobs and reminds you to follow up.</li>
+</ol>
+<p>To do the middle steps in one go, <code>/go &lt;id&gt;</code> takes a job as far as it can and stops for your review.</p>
+<h2>Why a human stays in the loop</h2>
+<p>Automated, unreviewed applications tend to contain mistakes and can get you rejected. In Handoff the assistant cannot send, submit, create accounts, type passwords or read your vault. The code enforces this by giving the assistant and the human different interfaces.</p>
+<h2>What you need</h2>
+<p>Node.js 20 or newer, Claude Code signed in, and a Chromium-based browser for form filling. A Gmail app password is optional, for sending email and reading replies. Handoff is currently tuned for developer roles and has been built and used on macOS.</p>
+<p><a class="cta" href="https://github.com/DeazStar/handoff#quick-start">Quick start on GitHub</a><a class="cta" href="how-it-works.html">How it works</a></p>
+<footer>Handoff is open source (MIT). <a href="https://github.com/DeazStar/handoff">Source on GitHub</a> · <a href="https://github.com/DeazStar/handoff/blob/main/docs/USAGE.md">Usage guide</a></footer>
+</main>
+</body>
+</html>

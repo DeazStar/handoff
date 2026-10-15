@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How Handoff works: local job application assistant for Claude Code</title>
+<meta name="description" content="The pieces behind Handoff: Claude Code commands, an MCP server, SQLite, a local dashboard, a shared browser and an encrypted vault.">
+<link rel="canonical" href="https://deazstar.github.io/handoff/how-it-works.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="How Handoff works: local job application assistant for Claude Code">
+<meta property="og:description" content="The pieces behind Handoff: Claude Code commands, an MCP server, SQLite, a local dashboard, a shared browser and an encrypted vault.">
+<meta property="og:url" content="https://deazstar.github.io/handoff/how-it-works.html">
+<meta property="og:image" content="https://deazstar.github.io/handoff/images/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<nav><a href="./">Home</a><a href="apply-for-jobs-with-claude-code.html">Apply with Claude Code</a><a href="how-it-works.html">How it works</a><a href="faq.html">FAQ</a><a href="https://github.com/DeazStar/handoff">GitHub</a></nav>
+<h1>How Handoff works</h1>
+<p class="lead">Handoff is a local-first job application assistant for Claude Code: slash commands and an MCP server for the assistant, a SQLite database, a dashboard and a shared browser.</p>
+<h2>The pieces</h2>
+<ul>
+<li><strong>Claude Code</strong> runs the slash commands (<code>/discover</code>, <code>/tailor</code>, <code>/email</code>, <code>/apply</code> and others).</li>
+<li><strong>The MCP server</strong> gives the assistant a fixed set of tools to read and write the database. It has no tool to send, submit or read secrets.</li>
+<li><strong>SQLite</strong> holds your facts, jobs, drafts, answers and history in one file on your computer.</li>
+<li><strong>The dashboard</strong> listens only on <code>127.0.0.1</code>. It is where you review, edit, send and submit.</li>
+<li><strong>A shared Chromium</strong> lets the assistant fill forms in a real browser that you can see and take over.</li>
+<li><strong>The vault</strong> is encrypted storage for your mail login and site passwords. The assistant cannot read it.</li>
+</ul>
+<h2>How it avoids invented claims</h2>
+<p>Every statement in a CV, cover letter or email must cite one of your saved facts, and numbers must match the fact they cite. The server checks this before saving a document and refuses unsupported text. It also checks writing rules, such as sentence length and structure, so drafts read like a person wrote them.</p>
+<h2>Where the human steps are</h2>
+<p>Sending an email, pressing Submit on a form, creating an account and typing a password are human actions. The database also blocks job state changes that skip the rules, and daily limits cap how many jobs are added and how many applications go out.</p>
+<h2>It improves as you use it</h2>
+<p>Answers you give, gaps you close, your preferences and finished site profiles are saved locally and reused. Nothing is trained; the improvement comes from what you teach it.</p>
+<p>The full design and boundaries are in <a href="https://github.com/DeazStar/handoff/blob/main/DESIGN.md">DESIGN.md</a>.</p>
+<p><a class="cta" href="https://github.com/DeazStar/handoff">View on GitHub</a><a class="cta" href="faq.html">FAQ</a></p>
+<footer>Handoff is open source (MIT). <a href="https://github.com/DeazStar/handoff">Source on GitHub</a> · <a href="https://github.com/DeazStar/handoff/blob/main/docs/USAGE.md">Usage guide</a></footer>
+</main>
+</body>
+</html>
