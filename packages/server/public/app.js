@@ -1469,7 +1469,7 @@ async function vaultView() {
         h("ol", { class: "muted" },
           h("li", {}, "Open your Google Account, then Security."),
           h("li", {}, "Turn on 2-Step Verification if it is off."),
-          h("li", {}, "Open App passwords, name it jobhunt, and copy the 16 characters."),
+          h("li", {}, "Open App passwords, name it Handoff, and copy the 16 characters."),
           h("li", {}, "Paste them below. You can revoke it in Google at any time."))),
       pw.el,
       h("div", { class: "row" },
@@ -1740,7 +1740,7 @@ async function render() {
   const [, page, arg] = location.hash.split("?")[0].split("/");
   view.classList.add("is-loading");
   view.setAttribute("aria-busy", "true");
-  document.title = `${({ pipeline: "Pipeline", jobs: "Job", cv: "CV", facts: "Facts", applications: "Forms", emails: "Emails", replies: "Replies", tracker: "Tracker", accounts: "Accounts", companies: "Companies", vault: "Vault", settings: "Settings" })[page] || "Needs you"} · jobhunt`;
+  document.title = `${({ pipeline: "Pipeline", jobs: "Job", cv: "CV", facts: "Facts", applications: "Forms", emails: "Emails", replies: "Replies", tracker: "Tracker", accounts: "Accounts", companies: "Companies", vault: "Vault", settings: "Settings" })[page] || "Needs you"} · Handoff`;
   let queueCount = 0;
   let repliesNew = 0;
   try {

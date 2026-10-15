@@ -13,7 +13,8 @@
     "demo:seed-ranking": "node scripts/seed-priority-demo.mjs",
     "collect:yc": "node scripts/collect-yc.mjs",
     "browser": "node scripts/browser.mjs",
-    "reset-limit": "node scripts/reset-limit.mjs"
+    "reset-limit": "node scripts/reset-limit.mjs",
+    "demo:data": "node scripts/seed-demo-data.mjs"
   },
   "engines": {
     "node": ">=20"

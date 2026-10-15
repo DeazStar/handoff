@@ -12,6 +12,10 @@ Everything runs on your computer. Your data lives in one SQLite file, the dashbo
 
 > **Who it is for, today:** developers. The CV rules, skill groups, writing examples and job search are tuned for developer roles. The plan is to make Handoff generic, so it works for any kind of job: see the [roadmap](#roadmap).
 
+![Handoff in action: Needs you, an email draft, a CV with its ATS score, a gap being filled in, and a reply](docs/images/demo.gif)
+
+*A made-up job hunt, from the built-in demo data. [Try it yourself](#quick-start).*
+
 ## What it does
 
 | | |
@@ -22,6 +26,24 @@ Everything runs on your computer. Your data lives in one SQLite file, the dashbo
 | **Apply by form** | `/apply` fills the form in a real browser, leaves the tab open and records every answer with its source. You check and press Submit yourself. |
 | **Follow up** | The dashboard reads your mailbox (read-only) for replies, moves jobs to *replied* when someone answers in your thread, and reminds you to follow up. A **Tracker** keeps applications you made by hand. |
 | **Improve over time** | Gaps and bullets without numbers become cards. You answer once and every later CV benefits. An ATS-style score tells you what a CV is missing. |
+
+## Screenshots
+These use the built-in demo data: a made-up person and made-up companies.
+
+**Everything waiting for you, in one place.** The assistant stops at each step that needs a person.
+![Needs you](docs/images/needs-you.png)
+
+**A job's CV, with an ATS-style score.** It shows what matched, what is missing and what to fix. Nothing is claimed that your facts do not support.
+![CV score](docs/images/cv-score.png)
+
+**Gaps become cards.** Say what you really did, or have the assistant draft it from facts you already saved. Nothing is saved until you press a save button.
+![Gaps](docs/images/gaps.png)
+
+**Your pipeline, ranked.**
+![Pipeline](docs/images/pipeline.png)
+
+**Replies, matched to your applications.** Possible matches are for you to check; nothing moves by itself.
+![Replies](docs/images/replies.png)
 
 ## It gets better as you use it
 Handoff keeps what you teach it, on your computer, and reuses it.
@@ -63,6 +85,13 @@ npm start -w @jobhunt/server           # prints a dashboard link; also starts th
    /add https://example.com/jobs/123 go
    ```
    Then look at **Needs you** in the dashboard.
+
+**Want to look around first?** Fill a throwaway folder with a made-up job hunt (a fictional person and companies; nothing is sent anywhere):
+```bash
+JOBHUNT_HOME=/tmp/handoff-demo npm run demo:data
+JOBHUNT_HOME=/tmp/handoff-demo JOBHUNT_NO_BROWSER=1 JOBHUNT_NO_DRAFTER=1 npm start -w @jobhunt/server
+```
+The demo refuses to run if the folder already has a profile, so it can never mix with real data.
 
 The step-by-step guide, with every command and example, is in **[docs/USAGE.md](docs/USAGE.md)**.
 
