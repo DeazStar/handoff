@@ -1,4 +1,4 @@
-# jobhunt-copilot
+# Handoff
 
 A local-first job-hunt platform. An AI assistant (Claude Code) does the tiring work: it finds real jobs, checks they are still open, tailors your CV and cover letter from facts you wrote, finds a verified contact, drafts the email and fills in the form. **You approve every step that cannot be undone.** Nothing is submitted, sent or signed up for without you.
 
