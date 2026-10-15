@@ -62,3 +62,4 @@ export { scoreCv, saveCvScore, getCvScore, type CvScore, type ScoreKeyword, type
 export { summaryProblems, headlineProblems, repeatsBullet } from "./cvPlan.js";
 export { countBulletsWithoutNumber, requestMetricCards, confirmMetric } from "./metrics.js";
 export { getSiteProfile, listSiteProfiles, setSiteProfile, type SiteProfile } from "./siteProfile.js";
+export { matchFormMessage, PLATFORM_DOMAINS, type FormApplied, type MatchedBy } from "./replies.js";

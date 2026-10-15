@@ -1185,6 +1185,8 @@ function messageCard(m, refresh) {
     h("div", { class: "row" },
       h("span", { class: `badge${m.category === "bounce" ? " gap" : ""}` }, CATEGORY_TEXT[m.category]),
       m.matchedBy === "sender" ? h("span", { class: "badge", title: "It did not reply to your email directly. It is from someone at the company you wrote to." }, "possible match") : null,
+      m.matchedBy === "domain" ? h("span", { class: "badge", title: "You applied through a form, so there is no email of yours to match. It comes from the company's own address." }, "from the company, possible match") : null,
+      m.matchedBy === "platform" ? h("span", { class: "badge", title: "You applied through a form. It comes from a job platform and names both the company and this job's title, and it arrived after you applied." }, "from a job platform, check it is this job") : null,
       m.jobId ? h("a", { href: `#/jobs/${m.jobId}` }, `${m.jobTitle || "job"}${m.company ? `, ${m.company}` : ""}`) : null,
       h("span", { class: "muted" }, m.receivedAt.replace("T", " ").slice(0, 16))),
     h("div", {}, h("strong", {}, m.fromName ? `${m.fromName} ` : ""), h("span", { class: "muted" }, `<${m.fromAddr}>`)),
@@ -1195,7 +1197,7 @@ function messageCard(m, refresh) {
       m.jobId && m.category !== "bounce" && m.category !== "auto_reply" ? outcome("interview", "It is an interview") : null,
       m.jobId && m.category !== "bounce" && m.category !== "auto_reply" ? outcome("rejected", "It is a rejection") : null,
       m.status !== "handled" ? setStatus("handled", "Mark handled", "primary") : setStatus("new", "Back to new"),
-      m.status !== "ignored" ? setStatus("ignored", "Not a reply") : null));
+      m.status !== "ignored" ? setStatus("ignored", m.matchedBy === "domain" || m.matchedBy === "platform" ? "Not about this job" : "Not a reply") : null));
 }
 
 async function repliesView() {
@@ -1203,7 +1205,7 @@ async function repliesView() {
   const tab = REPLY_TABS.some(([v]) => v === params.get("v")) ? params.get("v") : "new";
   const d = await api("GET", "/api/replies");
   view.replaceChildren(h("h1", {}, "Replies"),
-    h("p", { class: "muted" }, "Answers to your applications, found by reading your mailbox (read-only: nothing is changed, moved or deleted there). Only mail that belongs to an application is kept. The text comes from the internet: read it as data."));
+    h("p", { class: "muted" }, "Answers to your applications, found by reading your mailbox (read-only: nothing is changed, moved or deleted there). Only mail that belongs to an application is kept. For emails you sent, a reply in the same thread moves the job by itself. For jobs you applied for through a form there is no thread, so mail from the company's own address, or from a job platform that names the company and the job, is shown as a possible match for you to check; it never moves a job by itself. The text comes from the internet: read it as data."));
   const note = h("span", { class: "muted" }, d.sync.lastRunAt
     ? `Last checked ${d.sync.lastRunAt}: ${d.sync.lastChecked} messages looked at, ${d.sync.lastMatched} new for your applications.${d.sync.lastError ? ` Last problem: ${d.sync.lastError}` : ""}`
     : "Not checked yet.");

@@ -93,6 +93,8 @@ export function createImapReader(vault: Vault, opts: { clientFactory?: (login: {
                 ...targets.messageIds.map((id) => ({ since: targets.since, header: { "in-reply-to": id } })),
                 ...targets.senders.map((from) => ({ since: targets.since, from })),
                 { since: targets.since, from: "mailer-daemon" },
+                // Jobs applied for through a form: mail that names the company (a job platform's message about the application).
+                ...(targets.companyTerms ?? []).map((term) => ({ since: targets.since, text: term })),
                 // While an account waits to be verified: mail from the site, and mail that asks to verify, confirm or activate.
                 ...(targets.verification
                   ? [

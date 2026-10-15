@@ -98,6 +98,15 @@ describe("the mailbox reader", () => {
     ]);
   });
 
+  it("also asks for mail that names the company, for jobs applied for through a form", async () => {
+    const t = await reader();
+    await t.r.fetch({ ...targets, companyTerms: ["Quadrant Health", "Acme"] });
+    expect(t.searches.slice(-2)).toEqual([{ since: targets.since, text: "Quadrant Health" }, { since: targets.since, text: "Acme" }]);
+    const plain = await reader();
+    await plain.r.fetch(targets);
+    expect(plain.searches.some((q: any) => q.text)).toBe(false);
+  });
+
   it("also asks for mail from the site and mail that says verify, while an account is waiting", async () => {
     const t = await reader();
     await t.r.fetch({ ...targets, verification: { labels: ["acme"], since: new Date("2026-10-01T00:00:00Z") } });

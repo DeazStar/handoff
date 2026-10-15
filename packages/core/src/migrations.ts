@@ -679,4 +679,33 @@ ALTER TABLE preferences ADD COLUMN salary_period TEXT CHECK (salary_period IN ('
       );
     `,
   },
+  {
+    id: 36,
+    name: "messages_from_form_applications",
+    // matched_by gains 'domain' (from the company's own address) and 'platform' (from a job platform, matched by company and title),
+    // for jobs applied for through a form, where there is no sent email to thread on. SQLite cannot change a CHECK, so the table is rebuilt.
+    sql: `
+      CREATE TABLE messages_new (
+        id INTEGER PRIMARY KEY,
+        message_id TEXT NOT NULL UNIQUE,
+        job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
+        email_id INTEGER REFERENCES emails(id) ON DELETE SET NULL,
+        contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+        from_addr TEXT NOT NULL,
+        from_name TEXT,
+        subject TEXT NOT NULL,
+        received_at TEXT NOT NULL,
+        snippet TEXT NOT NULL DEFAULT '',
+        category TEXT NOT NULL DEFAULT 'reply' CHECK (category IN ('reply','auto_reply','bounce','rejection','interview','other')),
+        matched_by TEXT NOT NULL CHECK (matched_by IN ('thread','sender','domain','platform')),
+        status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','handled','ignored')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO messages_new (id, message_id, job_id, email_id, contact_id, from_addr, from_name, subject, received_at, snippet, category, matched_by, status, created_at)
+        SELECT id, message_id, job_id, email_id, contact_id, from_addr, from_name, subject, received_at, snippet, category, matched_by, status, created_at FROM messages;
+      DROP TABLE messages;
+      ALTER TABLE messages_new RENAME TO messages;
+      CREATE INDEX idx_messages_job ON messages(job_id);
+    `,
+  },
 ];

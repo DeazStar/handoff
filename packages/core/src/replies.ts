@@ -71,6 +71,23 @@ function sentEmails(db: DB): SentEmail[] {
   ).map((r) => ({ ...r, messageId: normId(r.messageId), contactEmail: r.contactEmail.toLowerCase() }));
 }
 
+/** Jobs applied for through a form: no email of ours exists, so a reply can only be matched by who sent it. */
+function formApplied(db: DB): FormApplied[] {
+  const rows = db
+    .prepare(
+      `SELECT j.id AS jobId, j.title AS title, COALESCE(c.name, '') AS company, c.domain AS domain, c.website AS website, a.sent_at AS sentAt, j.state AS state
+       FROM applications a JOIN jobs j ON j.id = a.job_id LEFT JOIN companies c ON c.id = j.company_id
+       WHERE a.route = 'form' AND a.status = 'submitted' AND a.sent_at IS NOT NULL`,
+    )
+    .all() as { jobId: number; title: string; company: string; domain: string | null; website: string | null; sentAt: string; state: JobState }[];
+  const host = (u: string | null) => { try { return u ? new URL(u.includes("://") ? u : `https://${u}`).hostname.toLowerCase().replace(/^www\./, "") : ""; } catch { return ""; } };
+  return rows.map((r) => ({
+    jobId: r.jobId, title: r.title, company: r.company, state: r.state,
+    domain: (r.domain ?? host(r.website)).toLowerCase().replace(/^www\./, ""),
+    appliedAt: Date.parse(`${r.sentAt.replace(" ", "T")}${r.sentAt.includes("T") ? "" : "Z"}`),
+  }));
+}
+
 /** Applications the user made by email on their own: no message id to thread on, but the address they wrote to is known. */
 function manualSent(db: DB): SentEmail[] {
   return (
@@ -83,13 +100,79 @@ function manualSent(db: DB): SentEmail[] {
   ).map((r) => ({ emailId: null, jobId: r.jobId, contactId: r.contactId, contactEmail: r.contactEmail.toLowerCase(), messageId: "", state: r.state }));
 }
 
+export interface FormApplied {
+  jobId: number;
+  title: string;
+  company: string;
+  /** The company's own domain, from its record or its website. */
+  domain: string;
+  /** When the application was submitted (ms since epoch). */
+  appliedAt: number;
+  state: JobState;
+}
+
+export type MatchedBy = "thread" | "sender" | "domain" | "platform";
+
 export interface Match {
-  email: SentEmail;
-  by: "thread" | "sender";
+  /** Set when the message belongs to an email we sent. */
+  email?: SentEmail;
+  /** Set when it belongs to a job applied for through a form. */
+  form?: FormApplied;
+  by: MatchedBy;
+}
+
+/** Job platforms and applicant tracking systems whose mail names the company in the text, not in the address. */
+export const PLATFORM_DOMAINS = [
+  "greenhouse.io", "greenhouse-mail.io", "lever.co", "hire.lever.co", "ashbyhq.com", "workable.com", "workablemail.com", "smartrecruiters.com",
+  "bamboohr.com", "recruitee.com", "teamtailor.com", "breezy.hr", "jobvite.com", "icims.com", "rippling.com", "workatastartup.com",
+  "ycombinator.com", "myworkday.com", "personio.de", "personio.com", "pinpointhq.com", "gem.com",
+];
+const TITLE_STOP = new Set(["the", "and", "for", "with", "remote", "full", "time", "part"]);
+
+const wordsOf = (t: string) => (t.toLowerCase().match(/[a-z0-9+#.]+/g) ?? []).map((w) => w.replace(/^[.]+|[.]+$/g, "")).filter((w) => w.length >= 2);
+const hasPhrase = (text: string, phrase: string) => new RegExp(`(?<![a-z0-9])${phrase.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9])`).test(text.toLowerCase());
+
+/** How much of a job title the text mentions, 0 to 1. A generic title such as "Software Engineer" needs all its words. */
+function titleScore(text: string, title: string): number {
+  const t = wordsOf(title).filter((w) => !TITLE_STOP.has(w));
+  if (!t.length) return 0;
+  const have = new Set(wordsOf(text));
+  return t.filter((w) => have.has(w)).length / t.length;
+}
+
+/**
+ * Which job applied for through a form this message belongs to. There is no email of ours to thread on, so the match is never certain:
+ * "domain" is mail from the company's own address; "platform" is mail from a job platform that names both the company and the job title,
+ * sent after the application. Both are shown to the user as a possible match, and neither moves a job by itself.
+ */
+export function matchFormMessage(m: InboundMessage, forms: FormApplied[]): Match | undefined {
+  const live: JobState[] = ["applied", "replied", "no_response", "interview"];
+  const candidates = forms.filter((f) => live.includes(f.state));
+  if (!candidates.length) return undefined;
+  const from = m.fromAddr.trim().toLowerCase();
+  const fromDomain = domainOf(from);
+  if (!fromDomain || FREE_MAIL.has(fromDomain)) return undefined;
+  const text = `${m.subject}\n${m.snippet}`;
+  const when = Date.parse(m.receivedAt);
+  const best = (list: FormApplied[]) => [...list].sort((a, b) => titleScore(text, b.title) - titleScore(text, a.title) || b.appliedAt - a.appliedAt)[0]!;
+
+  const own = candidates.filter((f) => f.domain && sameSite(fromDomain, f.domain));
+  if (own.length) return { form: best(own), by: "domain" };
+
+  if (PLATFORM_DOMAINS.some((p) => sameSite(fromDomain, p))) {
+    const named = candidates.filter((f) => f.company.trim().length >= 3 && hasPhrase(text, f.company.trim()) && titleScore(text, f.title) >= 0.7 && (Number.isNaN(when) || when >= f.appliedAt));
+    if (named.length) return { form: best(named), by: "platform" };
+  }
+  return undefined;
 }
 
 /** Which of our sent emails this message belongs to. A thread match is certain; a sender match is a suggestion. */
-export function matchMessage(m: InboundMessage, sent: SentEmail[]): Match | undefined {
+export function matchMessage(m: InboundMessage, sent: SentEmail[], forms: FormApplied[] = []): Match | undefined {
+  const viaEmail = matchSentEmail(m, sent);
+  return viaEmail ?? matchFormMessage(m, forms);
+}
+
+function matchSentEmail(m: InboundMessage, sent: SentEmail[]): Match | undefined {
   const ids = [m.inReplyTo, ...(m.references ?? [])].map(normId).filter(Boolean);
   if (ids.length) {
     const hit = sent.find((s) => ids.includes(s.messageId));
@@ -132,6 +215,7 @@ export function ingestMessages(db: DB, messages: InboundMessage[], actor: Actor)
   const autoMark = prefs?.autoMarkReplied !== false;
   db.transaction(() => {
     const sent = [...sentEmails(db), ...manualSent(db)];
+    const forms = formApplied(db);
     const known = db.prepare("SELECT 1 FROM messages WHERE message_id = ?");
     const insert = db.prepare(
       `INSERT INTO messages (message_id, job_id, email_id, contact_id, from_addr, from_name, subject, received_at, snippet, category, matched_by)
@@ -140,17 +224,22 @@ export function ingestMessages(db: DB, messages: InboundMessage[], actor: Actor)
     for (const m of messages) {
       const id = normId(m.messageId);
       if (!id || known.get(id)) continue;
-      const match = matchMessage(m, sent);
+      const match = matchMessage(m, sent, forms);
       if (!match) continue;
       const category = classifyMessage(m);
-      insert.run(id, match.email.jobId, match.email.emailId, match.email.contactId, m.fromAddr.trim().toLowerCase().slice(0, 254), m.fromName?.slice(0, 200) ?? null, m.subject.replace(/\s+/g, " ").trim().slice(0, 300), m.receivedAt, m.snippet.replace(/\s+/g, " ").trim().slice(0, MAX_SNIPPET), category, match.by);
+      const jobId = match.email?.jobId ?? match.form!.jobId;
+      insert.run(id, jobId, match.email?.emailId ?? null, match.email?.contactId ?? null, m.fromAddr.trim().toLowerCase().slice(0, 254), m.fromName?.slice(0, 200) ?? null, m.subject.replace(/\s+/g, " ").trim().slice(0, 300), m.receivedAt, m.snippet.replace(/\s+/g, " ").trim().slice(0, MAX_SNIPPET), category, match.by);
       result.matched++;
-      const jobId = match.email.jobId;
+      if (match.form) {
+        // A possible match for a form application: kept for the user to read, nothing happens to the job by itself.
+        if (category !== "auto_reply" && category !== "bounce") result.replies++;
+        continue;
+      }
       if (category === "bounce") {
-        db.prepare("UPDATE contacts SET status = 'bounced' WHERE id = ?").run(match.email.contactId);
-        queueAction(db, "follow_up", jobId, { reason: "bounce", emailId: match.email.emailId, to: match.email.contactEmail }, actor);
+        db.prepare("UPDATE contacts SET status = 'bounced' WHERE id = ?").run(match.email!.contactId);
+        queueAction(db, "follow_up", jobId, { reason: "bounce", emailId: match.email!.emailId, to: match.email!.contactEmail }, actor);
         result.bounces++;
-        logEvent(db, actor, "email_bounced", jobId, { emailId: match.email.emailId });
+        logEvent(db, actor, "email_bounced", jobId, { emailId: match.email!.emailId });
         continue;
       }
       if (category === "auto_reply") continue;
@@ -188,7 +277,7 @@ export interface MessageRow {
   receivedAt: string;
   snippet: string;
   category: Category;
-  matchedBy: "thread" | "sender";
+  matchedBy: MatchedBy;
   status: MessageStatus;
 }
 
@@ -413,6 +502,8 @@ export interface SyncTargets {
   since: Date;
   /** While an account waits to be verified: the names of its sites, to find the mail that checks the address. */
   verification?: { labels: string[]; since: Date };
+  /** Company names of jobs applied for through a form: job platforms name the company in the text, not in the sender's address. */
+  companyTerms?: string[];
 }
 
 /**
@@ -437,5 +528,13 @@ export function getSyncTargets(db: DB, nowMs: number = Date.now()): SyncTargets 
     const d = domainOf(m.contactEmail);
     senders.add(FREE_MAIL.has(d) ? m.contactEmail : d);
   }
-  return { messageIds: [...new Set(rows.map((r) => normId(r.messageId)))], senders: [...senders], since, verification: verificationTargets(db) };
+  // Jobs applied for through a form: the company's own domain, and its name for the mail a job platform sends about it.
+  const terms = new Set<string>();
+  const live: JobState[] = ["applied", "replied", "no_response", "interview"];
+  for (const f of formApplied(db)) {
+    if (!live.includes(f.state) || nowMs - f.appliedAt > 180 * DAY) continue;
+    if (f.domain && !FREE_MAIL.has(f.domain)) senders.add(f.domain);
+    if (f.company.trim().length >= 3) terms.add(f.company.trim());
+  }
+  return { messageIds: [...new Set(rows.map((r) => normId(r.messageId)))], senders: [...senders], since, verification: verificationTargets(db), companyTerms: [...terms].slice(0, 40) };
 }
