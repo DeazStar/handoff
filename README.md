@@ -4,7 +4,7 @@ A local-first job-hunt platform. An AI assistant (Claude Code) does the tiring w
 
 Everything runs on your computer. Your data lives in one SQLite file, the dashboard listens only on `127.0.0.1`, and your secrets sit in an encrypted vault the assistant cannot read.
 
-> **Status:** early. It is built and used by one person, mostly on macOS. Expect rough edges, and read the [limitations](#limitations) before relying on it.
+> **Status:** early. Expect rough edges, and read the [limitations](#limitations) before relying on it.
 
 ## What it does
 
