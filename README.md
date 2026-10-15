@@ -1,6 +1,10 @@
 # Handoff
 
-A local-first job-hunt platform. An AI assistant (Claude Code) does the tiring work: it finds real jobs, checks they are still open, tailors your CV and cover letter from facts you wrote, finds a verified contact, drafts the email and fills in the form. **You approve every step that cannot be undone.** Nothing is submitted, sent or signed up for without you.
+*A local-first job-hunt workflow for Claude Code. It does the tiring work and hands every irreversible step back to you.*
+
+Handoff is a local-first job-hunt platform. An AI assistant (Claude Code) does the tiring work: it finds real jobs, checks they are still open, tailors your CV and cover letter from facts you wrote, finds a verified contact, drafts the email and fills in the form. **You approve every step that cannot be undone.** Nothing is submitted, sent or signed up for without you.
+
+**The more you use it, the better it gets:** every answer you give is remembered, so your CV, your applications and the whole system improve with each job.
 
 Everything runs on your computer. Your data lives in one SQLite file, the dashboard listens only on `127.0.0.1`, and your secrets sit in an encrypted vault the assistant cannot read.
 
@@ -17,6 +21,14 @@ Everything runs on your computer. Your data lives in one SQLite file, the dashbo
 | **Follow up** | The dashboard reads your mailbox (read-only) for replies, moves jobs to *replied* when someone answers in your thread, and reminds you to follow up. A **Tracker** keeps applications you made by hand. |
 | **Improve over time** | Gaps and bullets without numbers become cards. You answer once and every later CV benefits. An ATS-style score tells you what a CV is missing. |
 
+## It gets better as you use it
+Handoff keeps what you teach it, on your computer, and reuses it.
+- **Your CV gets stronger.** Close a gap once and every later CV can use it. Add a real number to a bullet and every CV shows it.
+- **You are asked less.** A form question you answered, a preference, a standard answer or a skill level is saved and filled in next time. Accounts and finished site profiles are remembered, so no step is repeated.
+- **Searching gets sharper.** Companies you judged, links you skipped and career pages already found are never redone, so each run spends its effort on new things.
+- **It sounds more like you.** Your writing style, your own wording and the examples you approve shape every draft.
+- **Nothing is trained.** It improves because you teach it, and all of it stays in one local file you own.
+
 ## How it stays safe
 - The assistant can **draft, fill and record**. It cannot **send, submit, create accounts, type passwords or read your vault**. Those are human actions in the dashboard. The code enforces this: the assistant and the human use different APIs, and a database trigger blocks job state changes that skip the rules.
 - **No invented facts.** A CV, letter or email is checked against your saved facts before it is saved. An unsupported number or claim is refused.
@@ -32,8 +44,8 @@ Everything runs on your computer. Your data lives in one SQLite file, the dashbo
 
 ## Quick start
 ```bash
-git clone <this repository> jobhunt-copilot
-cd jobhunt-copilot
+git clone <this repository> handoff
+cd handoff
 npm install
 npm run build
 cp .mcp.json.example .mcp.json         # tells Claude Code where the tools are

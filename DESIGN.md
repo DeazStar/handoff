@@ -1,4 +1,4 @@
-# Job Hunt Platform: Design (draft v0.1)
+# Handoff: Design (draft v0.1)
 
 An open-source, local-first platform where an AI agent (Claude Code) does the tedious parts of a job search: finding real postings, tailoring materials, and preparing applications. The human keeps control of accounts, sensitive answers, and every final send/submit.
 

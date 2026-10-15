@@ -1,4 +1,4 @@
-# jobhunt-copilot
+# Handoff
 
 Open-source, local-first job-hunt platform. Read DESIGN.md before making changes; it is the source of truth for architecture and boundaries.
 

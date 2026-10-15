@@ -1,4 +1,4 @@
-# Using jobhunt-copilot
+# Using Handoff
 
 This guide shows what to click and what to type, with examples. For what the project is and how to install it, see the [README](../README.md).
 
