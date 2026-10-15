@@ -96,6 +96,15 @@ describe("accounts and the copy helper", () => {
     expect(clip).toBe("my own text");
   });
 
+  it("uses the username the agent typed on the sign-up page, and copies that", async () => {
+    await post("/api/vault/create", { passphrase: PASS });
+    const { id, username } = await (await post("/api/accounts/start", { site: "ycombinator.com", username: "naod-ararsa" })).json();
+    expect(username).toBe("naod-ararsa");
+    expect((await secret("site:ycombinator.com")).username).toBe("naod-ararsa");
+    await post(`/api/accounts/${id}/copy`, { what: "username" });
+    expect(clip).toBe("naod-ararsa");
+  });
+
   it("copies the email without clearing it, and refuses for an unknown account or a locked vault", async () => {
     await post("/api/vault/create", { passphrase: PASS });
     const { id } = await (await post("/api/accounts/start", { site: "acme.com", username: "other@example.com" })).json();

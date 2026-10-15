@@ -28,10 +28,11 @@ async function call(name: string, args: Record<string, unknown> = {}) {
   }
 }
 
-const P1 = "I am writing about the Backend Engineer role. Your posting asks for someone who can design and run payment services, and that is the work I have done for most of my career. I built a payments API serving 50000 users, and I own what I build from design through to production support, including the late night incidents that come with it.";
-const P2 = "What draws me to Acme is the focus on reliable infrastructure. I like small teams where one engineer can see a change from the first sketch to the customer using it, and I would bring that habit of finishing things, writing down decisions and keeping systems simple enough that the next person can understand them quickly.";
-const P3 = "I would welcome the chance to talk about how I could help your team. Thank you for your time and for considering my application.";
-const plan = (over: object[] = []) => ({ paragraphs: [{ text: P1, factIds: [fact] }, { text: P2, factIds: [] }, { text: P3, factIds: [] }, ...over].slice(0, 4) });
+const P1 = "I'm applying for the Backend Engineer role at Acme. I'm a software engineer who designs and runs payment services, and I built a payments API serving 50000 users. I own what I build from design through to production support, including the late night incidents.";
+const P2 = 'I design the services behind a product and keep them reliable. I write down decisions, keep the systems simple, and finish what I start, so the next engineer can pick the work up quickly. When a payment fails late at night, I want someone to find the cause in minutes and not in days. I also keep a short list of what could go wrong and how I would notice.';
+const P3 = 'I like small teams where one engineer can see a change from the first sketch to the customer using it. That is how I have worked so far, and it is how I plan to keep working. I am happy to share examples of my work and to explain the choices I made in them.';
+const P4 = 'Happy to talk if it looks like a fit. Thank you for your time and consideration.';
+const plan = (over: object[] = []) => ({ paragraphs: [{ text: P1, factIds: [fact] }, { text: P2, factIds: [] }, { text: P3, factIds: [] }, { text: P4, factIds: [] }, ...over].slice(0, 4) });
 
 async function connect(prefs: object = {}) {
   setPreferences(db, { roles: [], seniority: [], locations: [], remotePolicy: "any", industries: [], exclusions: [], dailyApplicationLimit: 5, dailyDiscoveryLimit: 5, searchAnySite: true, ...prefs }, H);
@@ -97,7 +98,7 @@ describe("writing a cover letter", () => {
 describe("the email needs its cover letter", () => {
   const draft = () => call("draft_email", { jobId, contactId, blocks: [
     { text: "Dear Jane,", factIds: [], kind: "boilerplate" },
-    { text: "I built a payments API serving 50000 users; my CV and cover letter are attached.", factIds: [fact] },
+    { text: "I'm applying for the Backend Engineer role at Acme. I built a payments API serving 50000 users; my CV and cover letter are attached.", factIds: [fact] },
     { text: "Best regards,", factIds: [], kind: "boilerplate" },
   ] });
 
@@ -125,7 +126,7 @@ describe("a cover letter for a form", () => {
     await call("save_cover_letter", { jobId, plan: plan() });
     const r = await call("get_cover_letter", { jobId });
     expect(r.error).toBe(false);
-    expect(r.data.text.startsWith("Dear Hiring Team,")).toBe(true);
+    expect(r.data.text.startsWith("Dear Hiring Manager,")).toBe(true);
     expect(r.data.text.endsWith("Sincerely,\n\nAda Lovelace")).toBe(true);
     expect(r.data.file.endsWith("Ada-Lovelace-Cover-Letter.pdf")).toBe(true);
     expect(readFileSync(r.data.file).subarray(0, 5).toString()).toBe("%PDF-");

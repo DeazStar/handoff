@@ -14,9 +14,10 @@ If no job id was given, say "Give me a job id, for example /go 12" and stop.
 ## Plan
 1. `get_job` for that id. Say its title, company, id and state.
 2. Decide what is next from its state and route:
-   - **matched**, no CV yet: tailor the CV, then continue below.
+   - **matched**: tailor the CV, then continue below. A job the user sent back to matched to be redone may already have older documents: still tailor and save a new version, and write a new cover letter and email or form from it.
+   - **materials_ready** but the job has **no CV document** (the user deleted it): tailor the CV first, as for matched (the state stays materials_ready), then continue below.
    - **materials_ready**, route `email`: draft the email.
-   - **materials_ready**, route `form`: fill the form.
+   - **materials_ready**, route `form`: fill the form. A job's application only counts as **prepared** when its status is `prepared`. One with status `discarded` (the user threw the form away to start again) is not prepared: fill the form fresh and do not say refill.
    - **awaiting_approval**: say it is waiting for the user (an email draft or a filled form) and where to look in the dashboard (Emails or Forms). Stop.
    - **applied, replied, interview, offer, rejected, no_response, dead, skipped**: say it has nothing left to do. Stop.
    - **found or verified_live**: say it has not been matched yet and needs `/discover` first. Stop.

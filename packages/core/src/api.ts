@@ -1,10 +1,13 @@
-import { deleteStandardAnswer, discardApplication, getApplication, listApplications, listStandardAnswers, markApplicationSubmitted, prepareApplication, setStandardAnswer, type PrepareInput } from "./application.js";
+import { getSiteProfile, listSiteProfiles, setSiteProfile } from "./siteProfile.js";
+import { confirmMetric, countBulletsWithoutNumber, requestMetricCards } from "./metrics.js";
+import { getCvScore, saveCvScore, scoreCv, type ScoreKeyword } from "./cvScore.js";
+import { applicationRoom, assertApplicationRoom, deleteStandardAnswer, discardApplication, getApplication, getPreparedApplication, listApplications, listStandardAnswers, markApplicationSubmitted, prepareApplication, setStandardAnswer, type PrepareInput } from "./application.js";
 import { addPerson, getCompanyResearch, listPeople, markCompanyResearched } from "./research.js";
 import { getJobDescription } from "./queries.js";
 import { saveJobDetails } from "./jobs.js";
-import { addContact, applicationsToday, beginSend, discardEmail, draftEmail, failSend, finishSend, getContact, getEmail, listContacts, listEmails, markContactBounced, noContactFound, releaseSend, updateEmail, type DraftInput } from "./email.js";
+import { addContact, applicationsToday, resetApplicationCount, beginSend, discardEmail, draftEmail, failSend, finishSend, getContact, getEmail, listContacts, listEmails, markContactBounced, noContactFound, releaseSend, updateEmail, type DraftInput } from "./email.js";
 import { addCandidateJobWithinBudget, checkCandidate, checkLinks, userLinkBudget, logSkippedCandidate, type SkipReason, discoveryBudget, listSources, recordVerification, setMatch, type JobSignals, setRoute, setSourceEnabled, upsertCompany, upsertSource, type Verification } from "./agentOps.js";
-import { confirmGap, listOpenActions, queueAction, reportGap, resolveAction, type ActionKind, type GapReport } from "./actionQueue.js";
+import { cancelGapDrafts, clearGapPolish, listGapPolishRequests, requestGapPolish, requestMetricPolish, submitGapPolish, confirmGap, listGapDraftRequests, listOpenActions, requestGapDrafts, submitGapDraft, queueAction, reportGap, resolveAction, type ActionKind, type GapReport } from "./actionQueue.js";
 import type { DB } from "./db.js";
 import { deleteDocument, getDocument, listDocuments, nextDocumentVersion, saveDocument, type NewDocument } from "./documents.js";
 import { addBullet, addEntry, deleteEntry, getCvMaterial, importCv, listEntries, moveEntry, setSkillGroup, updateEntry, type CvImport, type EntryInput } from "./cv.js";
@@ -14,7 +17,9 @@ import { addCandidateJob, logEvent, transitionJob, type NewJob } from "./jobs.js
 import { getPreferences, getProfile, setPreferences, setProfile, type Preferences, type Profile } from "./profile.js";
 import { directoryStats, importDirectory, listDirectory, listScoutCompanies, setCompanyVerdict, type DirectoryCompany, type DirectoryFilter, type Verdict } from "./directory.js";
 import { setCareersPage } from "./careers.js";
-import { accountStatus, confirmAccount, createAccount, deleteAccount, listAccounts, markAccountVerified, requestAccount, getAccount, touchAccount, type AccountRequest } from "./accounts.js";
+import { acceptProposal, proposeRemember, type Proposal } from "./remember.js";
+import { askUser, requestProfileFill, accountStatus, confirmAccount, createAccount, deleteAccount, listAccounts, markAccountVerified, requestAccount, getAccount, touchAccount, type AccountRequest } from "./accounts.js";
+import { ignoreVerification, listVerifications, setVerificationUsed } from "./verification.js";
 import { listTracker, recordManualApplication, type ManualApplication } from "./manual.js";
 import { applyMessageOutcome, draftFollowUp, dueFollowUps, getSyncState, listMessages, newMessageCount, setMessageCategory, setMessageStatus, type Category, type MessageStatus } from "./replies.js";
 import { coverMode, getCoverMaterial, latestCover, prepareCover, type CoverPlan } from "./cover.js";
@@ -61,12 +66,21 @@ export function createAgentApi(db: DB) {
     // Accounts: the agent may ask for one and ask whether one exists. It never sees a password or a username.
     requestAccount: (jobId: number | null, r: AccountRequest) => requestAccount(db, jobId, r, "agent"),
     accountStatus: (site: string) => accountStatus(db, site),
+    proposeRemember: (jobId: number | null, p: Proposal) => proposeRemember(db, jobId, p, "agent"),
+    askUser: (jobId: number | null, q: { question: string; options?: string[]; site?: string }) => askUser(db, jobId, q, "agent"),
+    requestProfileFill: (jobId: number | null, r: { pageUrl: string; note?: string }) => requestProfileFill(db, jobId, r, "agent"),
     companyDomain: (companyId: number) => (db.prepare("SELECT domain FROM companies WHERE id = ?").get(companyId) as { domain: string | null } | undefined)?.domain ?? undefined,
+    getPreparedApplication: (jobId: number) => getPreparedApplication(db, jobId),
+    siteProfileStatus: (site: string) => getSiteProfile(db, site) ?? { site, complete: false, unknown: true },
+    markSiteProfile: (site: string, complete: boolean, evidence?: string) => setSiteProfile(db, site, complete, evidence, "agent"),
+    applicationRoom: () => applicationRoom(db),
+    scoreCv: (documentId: number, keywords: ScoreKeyword[], pages?: number) => { const s = scoreCv(db, documentId, keywords, pages); saveCvScore(db, documentId, s, "agent"); return s; },
+    assertApplicationRoom: (jobId: number) => assertApplicationRoom(db, jobId),
     listScoutCompanies: (limit: number) => listScoutCompanies(db, limit, true),
     setCareersPage: (companyId: number, r: { url: string } | { none: true; note?: string }) => setCareersPage(db, companyId, r, "agent"),
     setCompanyVerdict: (companyId: number, verdict: "potential" | "discarded", reason: string) => setCompanyVerdict(db, companyId, verdict, reason, "agent"),
     // Contacts and drafts. The agent can add a verified contact and write a draft; it can never send.
-    addContact: (c: { companyId: number; email: string; name?: string; role?: string; sourceUrl: string; personId?: number; verification?: "on_page" | "pattern"; browserEvidence?: { quote: string; pageUrl: string }; evidence?: { pattern: string; exampleEmail: string; exampleName: string; exampleUrl: string } }) => addContact(db, c, "agent"),
+    addContact: (c: { companyId: number; email: string; name?: string; role?: string; sourceUrl: string; personId?: number; verification?: "on_page" | "pattern"; browserEvidence?: { quote: string; pageUrl: string; rule?: string }; evidence?: { pattern: string; exampleEmail: string; exampleName: string; exampleUrl: string } }) => addContact(db, c, "agent"),
     listContacts: (companyId: number) => listContacts(db, companyId),
     addPerson: (p: { companyId: number; name: string; role: string; sourceUrl: string }) => addPerson(db, p, "agent"),
     listPeople: (companyId: number) => listPeople(db, companyId),
@@ -91,6 +105,10 @@ export function createAgentApi(db: DB) {
     logSkippedCandidate: (c: { url: string; reason: SkipReason; detail?: string; sourceId?: number }) =>
       logSkippedCandidate(db, c, "agent"),
     reportGap: (jobId: number, gap: GapReport) => reportGap(db, jobId, gap, "agent"),
+    listGapDraftRequests: () => listGapDraftRequests(db),
+    listGapPolishRequests: () => listGapPolishRequests(db),
+    submitGapPolish: (actionId: number, polished: string, note?: string) => submitGapPolish(db, actionId, polished, note, "agent"),
+    submitGapDraft: (actionId: number, draft: Parameters<typeof submitGapDraft>[2], note?: string, closestFactIds?: number[]) => submitGapDraft(db, actionId, draft, note, closestFactIds, "agent"),
   };
 }
 
@@ -109,6 +127,10 @@ export function createHumanApi(db: DB) {
     deleteFact: (id: number) => deleteFact(db, id, "human"),
     makeFactGeneral: (id: number) => makeFactGeneral(db, id, "human"),
     listFacts: () => listFacts(db),
+    requestGapPolish: (actionId: number, text: string) => requestGapPolish(db, actionId, text, "human"),
+    clearGapPolish: (actionId: number) => clearGapPolish(db, actionId, "human"),
+    requestGapDrafts: (scope: { actionId?: number; jobId?: number }) => requestGapDrafts(db, scope, "human"),
+    cancelGapDrafts: (scope: { actionId?: number; jobId?: number }) => cancelGapDrafts(db, scope, "human"),
     confirmGap: (actionId: number, fact: Omit<NewFact, "jobId">, scope: "job" | "general") =>
       confirmGap(db, actionId, fact, scope, "human"),
     getDocument: (id: number) => getDocument(db, id),
@@ -148,6 +170,15 @@ export function createHumanApi(db: DB) {
     failSend: (id: number, message: string) => failSend(db, id, message, "human"),
     releaseSend: (id: number) => releaseSend(db, id, "human"),
     applicationsToday: () => applicationsToday(db),
+    applicationRoom: () => applicationRoom(db),
+    getCvScore: (documentId: number) => getCvScore(db, documentId),
+    listSiteProfiles: () => listSiteProfiles(db),
+    setSiteProfile: (site: string, complete: boolean) => setSiteProfile(db, site, complete, "marked by you", "human"),
+    countBulletsWithoutNumber: () => countBulletsWithoutNumber(db),
+    requestMetricPolish: (actionId: number, numbers: string) => requestMetricPolish(db, actionId, numbers, "human"),
+    requestMetricCards: (limit = 5) => requestMetricCards(db, limit, "human"),
+    confirmMetric: (actionId: number, text: string) => confirmMetric(db, actionId, text, "human"),
+    resetApplicationCount: () => resetApplicationCount(db, "human"),
     listJobs: (state?: JobState, sort?: "updated" | "priority") => listJobs(db, { state, sort }),
     getJob: (id: number) => getJob(db, id),
     listActionsDetailed: () => listActionsDetailed(db),
@@ -159,7 +190,11 @@ export function createHumanApi(db: DB) {
     // The tracker: applications made by hand, and everything that has gone out.
     recordManualApplication: (m: ManualApplication) => recordManualApplication(db, m, "human"),
     listTracker: () => listTracker(db),
+    acceptProposal: (actionId: number, choice: { use?: "polished" | "original" | "text"; text?: string }) => acceptProposal(db, actionId, choice, "human"),
     listAccounts: () => listAccounts(db),
+    listVerifications: () => listVerifications(db),
+    setVerificationUsed: (id: number) => setVerificationUsed(db, id, "human"),
+    ignoreVerification: (id: number) => ignoreVerification(db, id, "human"),
     getAccount: (id: number) => getAccount(db, id),
     createAccount: (a: { site: string; username: string; loginUrl?: string; jobId?: number }) => createAccount(db, a, "human"),
     confirmAccount: (id: number) => confirmAccount(db, id, "human"),

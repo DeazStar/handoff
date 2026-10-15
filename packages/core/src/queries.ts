@@ -1,3 +1,6 @@
+import { canonicalSite } from "./accounts.js";
+import { levelFit, type Seniority } from "./levels.js";
+import { getPreferences } from "./profile.js";
 import type { DB } from "./db.js";
 import type { JobState } from "./states.js";
 import { priorityScore, type PriorityMode, type RemoteScope, type Sponsorship } from "./priority.js";
@@ -22,6 +25,10 @@ export interface JobRow {
   postedBy?: string;
   applyUrl?: string;
   remoteScope?: RemoteScope;
+  /** The level the posting asks for. */
+  seniority?: Seniority;
+  /** How that sits against the levels the user wants: match, stretch (one step off) or mismatch. Not set when either is unknown. */
+  levelFit?: "match" | "stretch" | "mismatch";
   sponsorship: Sponsorship;
   sponsorshipEvidence?: string;
   /** Match score plus the remote and sponsorship bonus for the user's priority mode. Only for ordering. */
@@ -47,6 +54,7 @@ const toJob = (r: any): JobRow => ({
   postedBy: r.posted_by ?? undefined,
   applyUrl: r.apply_url ?? undefined,
   remoteScope: r.remote_scope ?? undefined,
+  seniority: r.seniority ?? undefined,
   sponsorship: r.sponsorship,
   sponsorshipEvidence: r.sponsorship_evidence ?? undefined,
 });
@@ -63,7 +71,11 @@ export function listJobs(db: DB, opts: { state?: JobState; sort?: "updated" | "p
     : db.prepare(`${JOB_SELECT} ORDER BY j.updated_at DESC, j.id DESC`).all();
   const mode = ((db.prepare("SELECT priority_mode FROM preferences WHERE id = 1").get() as { priority_mode: PriorityMode } | undefined)?.priority_mode ?? "remote_first") as PriorityMode;
   const jobs = rows.map(toJob);
-  for (const j of jobs) j.priority = priorityScore(j.matchScore, j.remoteScope, j.sponsorship, mode);
+  const wanted = getPreferences(db)?.seniority ?? [];
+  for (const j of jobs) {
+    j.levelFit = levelFit(j.seniority, wanted);
+    j.priority = priorityScore(j.matchScore, j.remoteScope, j.sponsorship, mode, j.levelFit);
+  }
   if (opts.sort === "priority") jobs.sort((a, b) => b.priority! - a.priority! || b.id - a.id);
   return jobs;
 }
@@ -112,9 +124,14 @@ export function listActionsDetailed(db: DB): ActionDetail[] {
       kind: r.kind,
       jobId: r.job_id,
       jobTitle: r.job_title ?? undefined,
-      payload: JSON.parse(r.payload),
+      payload: normalizeSite(JSON.parse(r.payload)),
       createdAt: r.created_at,
     }));
+}
+
+/** A sign-up card made before sites were grouped names "www.ycombinator.com"; show it under the site's one name. */
+function normalizeSite(p: any): any {
+  return p && typeof p.site === "string" ? { ...p, site: canonicalSite(p.site) } : p;
 }
 
 export function sourceStats(db: DB): unknown[] {

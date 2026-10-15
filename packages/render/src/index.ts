@@ -52,6 +52,7 @@ export async function renderCvPdf(cv: ResolvedCv): Promise<{ pdf: Buffer; pages:
 
   // Header
   font("Helvetica-Bold", 19).text(drawable(cv.header.name), left, MARGIN.top, { width, align: "center" });
+  if (cv.header.headline) font("Helvetica", 11, "#222222").text(drawable(cv.header.headline), left, doc.y + 1, { width, align: "center" });
   const contact = [cv.header.email, cv.header.phone, cv.header.location, ...cv.header.links.map(shortLink)].filter(Boolean) as string[];
   if (contact.length) {
     font("Helvetica", 9, "#333333").text(drawable(contact.join("  |  ")), left, doc.y + 2, { width, align: "center" });
@@ -157,8 +158,8 @@ export async function renderCoverPdf(c: ResolvedCover): Promise<{ pdf: Buffer; p
   const font = (name: "Helvetica" | "Helvetica-Bold", size: number, color = "#000000") => doc.font(name).fontSize(size).fillColor(color);
 
   font("Helvetica-Bold", 16).text(drawable(c.header.name), left, margin.top, { width });
-  const contact = [c.header.email, c.header.phone, c.header.location, ...c.header.links.map(shortLink)].filter(Boolean) as string[];
-  if (contact.length) font("Helvetica", 9, "#333333").text(drawable(contact.join("  |  ")), left, doc.y + 2, { width });
+  const contact = [c.header.location, c.header.email].filter(Boolean) as string[];
+  if (contact.length) font("Helvetica", 9.5, "#333333").text(drawable(contact.join("  |  ")), left, doc.y + 2, { width });
   const rule = doc.y + 6;
   doc.moveTo(left, rule).lineTo(left + width, rule).lineWidth(0.6).strokeColor("#555555").stroke();
   doc.y = rule + 16;
@@ -168,8 +169,6 @@ export async function renderCoverPdf(c: ResolvedCover): Promise<{ pdf: Buffer; p
   font("Helvetica", 10.5).text(drawable(c.recipient), left, doc.y, { width });
   if (c.company) font("Helvetica", 10.5).text(drawable(c.company), left, doc.y, { width });
   doc.y += 10;
-  font("Helvetica-Bold", 10.5).text(drawable(c.subject), left, doc.y, { width });
-  doc.y += 12;
   font("Helvetica", 10.5).text(drawable(c.greeting), left, doc.y, { width });
   doc.y += 8;
   for (const p of c.paragraphs) {

@@ -12,7 +12,16 @@ export interface ImapReader {
 const MAX_SOURCE_BYTES = 30_000;
 const MAX_MESSAGES_PER_SEARCH = 200;
 
-/** Turns one raw message into what the rest of the app needs: no attachments, no full body, only a short readable snippet. */
+/** The https links in a message, from its HTML and its text. They are untrusted: callers only show them, never fetch them. */
+export function extractLinks(html: string | false | undefined, text: string | undefined): string[] {
+  const found = new Set<string>();
+  const decode = (s: string) => s.replace(/&amp;/gi, "&").replace(/&#x2F;/gi, "/").replace(/&#43;/g, "+").replace(/&quot;/gi, '"');
+  if (html) for (const m of html.matchAll(/href\s*=\s*["'](https:\/\/[^"'\s<>]+)["']/gi)) found.add(decode(m[1]!));
+  if (text) for (const m of text.matchAll(/https:\/\/[^\s<>"')\]]+/gi)) found.add(decode(m[0]).replace(/[.,;:!?]+$/, ""));
+  return [...found].filter((l) => l.length <= 1000).slice(0, 25);
+}
+
+/** Turns one raw message into what the rest of the app needs: no attachments, no full body, only a short readable snippet and its links. */
 export async function parseRaw(source: Buffer, receivedAt: Date): Promise<InboundMessage | undefined> {
   const parsed = await simpleParser(source, { skipHtmlToText: false, skipImageLinks: true });
   const messageId = parsed.messageId;
@@ -43,6 +52,7 @@ export async function parseRaw(source: Buffer, receivedAt: Date): Promise<Inboun
     xAutoreply: !!(header("x-autoreply") || header("x-autorespond")),
     precedence: header("precedence"),
     failedRecipient: /^(mailer-daemon|postmaster)@/i.test(from.address) ? failed?.replace(/[>.,;]+$/, "") : undefined,
+    links: extractLinks(parsed.html, parsed.text),
   };
 }
 
@@ -83,6 +93,13 @@ export function createImapReader(vault: Vault, opts: { clientFactory?: (login: {
                 ...targets.messageIds.map((id) => ({ since: targets.since, header: { "in-reply-to": id } })),
                 ...targets.senders.map((from) => ({ since: targets.since, from })),
                 { since: targets.since, from: "mailer-daemon" },
+                // While an account waits to be verified: mail from the site, and mail that asks to verify, confirm or activate.
+                ...(targets.verification
+                  ? [
+                      ...targets.verification.labels.map((label) => ({ since: targets.verification!.since, from: label })),
+                      ...["verify", "confirm", "activate", "welcome"].map((subject) => ({ since: targets.verification!.since, subject })),
+                    ]
+                  : []),
               ];
               const uids = new Set<number>();
               for (const q of searches) {

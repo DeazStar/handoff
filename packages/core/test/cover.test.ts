@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  getPreferences as getPreferencesFor, addFact, coverMode, createAgentApi, createHumanApi, getEmail, getCoverMaterial, openDb, prepareCover, saveDocument, setPreferences, setProfile,
+  getPreferences as getPreferencesFor, addEntry, addFact, coverMode, createAgentApi, createHumanApi, getEmail, getCoverMaterial, openDb, prepareCover, saveDocument, setPreferences, setProfile,
   type CoverPlan,
 } from "../src/index.js";
 
@@ -8,7 +8,7 @@ const H = "human" as const;
 const throws = (fn: () => unknown) => { try { fn(); } catch (e) { return (e as Error).message; } return ""; };
 const prefs = (over: object = {}) => ({ roles: [], seniority: [], locations: [], remotePolicy: "any" as const, industries: [], exclusions: [], dailyApplicationLimit: 5, dailyDiscoveryLimit: 5, searchAnySite: true, ...over });
 
-const WORDS = (n: number) => Array.from({ length: n }, (_, i) => `word${i}`.replace(/\d/g, "x")).join(" ");
+const WORDS = (n: number) => Array.from({ length: Math.ceil(n / 10) }, () => "word ".repeat(9) + "end.").join(" ");
 const para = (text: string, factIds: number[] = []) => ({ text, factIds });
 
 function setup() {
@@ -24,12 +24,13 @@ function setup() {
   return { db, agent, human: createHumanApi(db), co, other, jobId, fact, contact };
 }
 
-// About 150 words of plain, plausible text, split in two paragraphs.
+// A letter that follows the rules: 185 words, four paragraphs, the role named once, each thing said once.
 const body = (fact: number): CoverPlan => ({
   paragraphs: [
-    para("I am writing about the Backend Engineer role. Your posting asks for someone who can design and run payment services, and that is the work I have done for most of my career. I built a payments API serving 50000 users, and I own what I build from design through to production support, including the late night incidents that come with it.", [fact]),
-    para("What draws me to Acme is the focus on reliable infrastructure. I like small teams where one engineer can see a change from the first sketch to the customer using it, and I would bring that habit of finishing things, writing down decisions and keeping systems simple enough that the next person can understand them quickly.", []),
-    para("I would welcome the chance to talk about how I could help your team. Thank you for your time and for considering my application.", []),
+    para("I'm applying for the Backend Engineer role at Acme. I'm a software engineer who designs and runs payment services, and I built a payments API serving 50000 users. I own what I build from design through to production support, including the late night incidents.", [fact]),
+    para('I design the services behind a product and keep them reliable. I write down decisions, keep the systems simple, and finish what I start, so the next engineer can pick the work up quickly. When a payment fails late at night, I want someone to find the cause in minutes and not in days. I also keep a short list of what could go wrong and how I would notice.', []),
+    para('I like small teams where one engineer can see a change from the first sketch to the customer using it. That is how I have worked so far, and it is how I plan to keep working. I am happy to share examples of my work and to explain the choices I made in them.', []),
+    para('Happy to talk if it looks like a fit. Thank you for your time and consideration.', []),
   ],
 });
 
@@ -37,13 +38,13 @@ describe("prepareCover", () => {
   it("builds the letter, with the greeting and sign-off added by the server", () => {
     const s = setup();
     const r = prepareCover(s.db, body(s.fact), s.jobId);
-    expect(r.cover.greeting).toBe("Dear Hiring Team,");
-    expect(r.cover.recipient).toBe("Hiring team");
+    expect(r.cover.greeting).toBe("Dear Hiring Manager,");
+    expect(r.cover.recipient).toBe("Hiring Manager");
     expect(r.cover.signature).toBe("Ada Lovelace");
     expect(r.cover.subject).toBe("Application: Backend Engineer");
     expect(r.cover.company).toBe("Acme");
-    expect(r.words).toBeGreaterThanOrEqual(120);
-    expect(r.blocks[0]).toMatchObject({ text: "Dear Hiring Team,", kind: "boilerplate" });
+    expect(r.words).toBeGreaterThanOrEqual(180);
+    expect(r.blocks[0]).toMatchObject({ text: "Dear Hiring Manager,", kind: "boilerplate" });
     expect(r.blocks.at(-1)).toMatchObject({ text: "Ada Lovelace", kind: "boilerplate" });
     expect(r.factIds).toEqual([s.fact]);
   });
@@ -66,7 +67,7 @@ describe("prepareCover", () => {
       return throws(() => prepareCover(s.db, p, s.jobId));
     };
     expect(bad(0, body(s.fact).paragraphs[0]!.text.replace("50000", "90000"), [s.fact])).toMatch(/"90000" does not appear/);
-    expect(bad(1, body(s.fact).paragraphs[1]!.text + " I have 10 years of experience.", [])).toMatch(/boilerplate must not contain numbers/);
+    expect(bad(1, body(s.fact).paragraphs[1]!.text + " I handle 7 incidents a week.", [])).toMatch(/boilerplate must not contain numbers/);
     expect(bad(0, body(s.fact).paragraphs[0]!.text, [9999])).toMatch(/unknown fact/);
   });
 
@@ -79,11 +80,52 @@ describe("prepareCover", () => {
 
   it("holds the paragraph count and the word limits", () => {
     const s = setup();
-    expect(throws(() => prepareCover(s.db, { paragraphs: [para("One only.", [s.fact])] }, s.jobId))).toMatch(/2 to 4 paragraphs/);
-    expect(throws(() => prepareCover(s.db, { paragraphs: [para("Short one.", [s.fact]), para("Short two.", [])] }, s.jobId))).toMatch(/at least 120/);
-    const long = { paragraphs: Array.from({ length: 4 }, (_, i) => para(WORDS(100), i === 0 ? [s.fact] : [])) };
-    expect(throws(() => prepareCover(s.db, long, s.jobId))).toMatch(/the limit is 380/);
-    expect(throws(() => prepareCover(s.db, { paragraphs: [para("x".repeat(901), [s.fact]), para("y", [])] }, s.jobId))).toMatch(/901 characters/);
+    const open = "I'm applying for the Backend Engineer role at Acme. ";
+    expect(throws(() => prepareCover(s.db, { paragraphs: [para("One only.", [s.fact])] }, s.jobId))).toMatch(/3 to 4 paragraphs/);
+    expect(throws(() => prepareCover(s.db, { paragraphs: [para(open + "Short.", [s.fact]), para("Short two.", []), para("Short three.", [])] }, s.jobId))).toMatch(/at least 180/);
+    const long = { paragraphs: Array.from({ length: 4 }, (_, i) => para((i === 0 ? open : "") + WORDS(100), i === 0 ? [s.fact] : [])) };
+    expect(throws(() => prepareCover(s.db, long, s.jobId))).toMatch(/the limit is 300/);
+    expect(throws(() => prepareCover(s.db, { paragraphs: [para("x".repeat(901), [s.fact]), para("y", []), para("z", [])] }, s.jobId))).toMatch(/901 characters/);
+  });
+
+  it("refuses a letter that repeats the posting, names an employer twice, forces a bonus, or has too many numbers", () => {
+    const s = setup();
+    addEntry(s.db, { kind: "work", title: "Engineer", organization: "Globex", startDate: "2022-01", isCurrent: true }, H);
+    const swap = (idx: number, text: string, facts: number[] = []) => {
+      const p = body(s.fact);
+      p.paragraphs[idx] = para(text, facts);
+      return throws(() => prepareCover(s.db, p, s.jobId));
+    };
+    expect(swap(1, "The posting describes a distributed team where early engineers decide across the stack. I keep systems simple.")).toMatch(/repeats the posting back/);
+    expect(swap(1, "You are building a tool for release teams. I keep systems simple.")).toMatch(/repeats the posting back/);
+    expect(swap(1, "Mobile experience is a bonus for you. I keep systems simple.")).toMatch(/wish list/);
+    expect(swap(1, body(s.fact).paragraphs[1]!.text + " At Globex I run services.")).not.toMatch(/Globex is named/);
+    const twice = body(s.fact);
+    twice.paragraphs[1] = para("At Globex I run services and keep them reliable for the team and customers every day.", []);
+    twice.paragraphs[2] = para("Also at Globex I write down decisions and keep the systems simple for the next engineer.", []);
+    expect(throws(() => prepareCover(s.db, twice, s.jobId))).toMatch(/Globex is named in paragraphs 2 and 3/);
+    expect(swap(0, body(s.fact).paragraphs[0]!.text.replace("I'm applying for the Backend Engineer role at Acme.", "Backend platforms matter."), [s.fact])).toMatch(/must start "I'm applying for/);
+    const many = body(s.fact);
+    many.paragraphs[2] = para(many.paragraphs[2]!.text + " It cut 40 steps to 3 and saved 12 hours.", []);
+    expect(throws(() => prepareCover(s.db, many, s.jobId))).toMatch(/at most 2/);
+  });
+
+  it("allows the years of experience the roles add up to, and no more", () => {
+    const s = setup();
+    addEntry(s.db, { kind: "work", title: "Engineer", organization: "Globex", startDate: "2021-01", isCurrent: true }, H);
+    const withYears = (n: number) => {
+      const p = body(s.fact);
+      p.paragraphs[0] = para(p.paragraphs[0]!.text.replace("I'm a software engineer", `I'm a software engineer with ${n}+ years`), [s.fact]);
+      return p;
+    };
+    expect(() => prepareCover(s.db, withYears(2), s.jobId)).not.toThrow();
+    expect(throws(() => prepareCover(s.db, withYears(30), s.jobId))).toMatch(/"30\+ years" is more than/);
+  });
+
+  it("needs an email and a city in the profile for the sender block", () => {
+    const s = setup();
+    s.db.prepare("UPDATE profile SET location = NULL").run();
+    expect(throws(() => prepareCover(s.db, body(s.fact), s.jobId))).toMatch(/Add your city/);
   });
 
   it("needs the job and a profile", () => {
@@ -127,7 +169,7 @@ describe("the cover letter goes with the email", () => {
     const r = prepareCover(s.db, body(s.fact), s.jobId);
     const cover = saveDocument(s.db, { jobId: s.jobId, kind: "cover", path: "documents/c.pdf", blocks: r.blocks }, "agent");
     s.agent.transitionJob(s.jobId, "materials_ready");
-    const { emailId } = s.agent.draftEmail({ jobId: s.jobId, contactId: s.contact.id, blocks: [{ text: "Dear Jane,", factIds: [], kind: "boilerplate" }, { text: "I built a payments API serving 50000 users; my CV and cover letter are attached.", factIds: [s.fact] }, { text: "Best regards,", factIds: [], kind: "boilerplate" }] });
+    const { emailId } = s.agent.draftEmail({ jobId: s.jobId, contactId: s.contact.id, blocks: [{ text: "Dear Jane,", factIds: [], kind: "boilerplate" }, { text: "I'm applying for the Backend Engineer role at Acme. I built a payments API serving 50000 users; my CV and cover letter are attached.", factIds: [s.fact] }, { text: "Best regards,", factIds: [], kind: "boilerplate" }] });
     expect(getEmail(s.db, emailId)!.coverAttachment).toEqual({ documentId: cover.id, version: cover.version });
   });
 });

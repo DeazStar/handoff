@@ -25,7 +25,7 @@ function applied(db: DB, n = 1, domain = "acme.example", messageId = `<sent${n}@
   saveDocument(db, { jobId, kind: "cv", path: "documents/cv.pdf", blocks: [{ text: `Built a payments API serving ${n}0000 users`, factIds: [fact] }] }, "agent");
   agent.transitionJob(jobId, "materials_ready");
   const contactId = agent.addContact({ companyId: co, email: `jane@${domain}`, name: "Jane Doe", sourceUrl: `https://${domain}/team` });
-  const { emailId } = agent.draftEmail({ jobId, contactId, blocks: [{ text: "Dear Jane,", factIds: [], kind: "boilerplate" }, { text: `I built a payments API serving ${n}0000 users.`, factIds: [fact] }, { text: "Best regards,", factIds: [], kind: "boilerplate" }] });
+  const { emailId } = agent.draftEmail({ jobId, contactId, blocks: [{ text: "Dear Jane,", factIds: [], kind: "boilerplate" }, { text: `I'm applying for the Backend Engineer role at Acme. I built a payments API serving ${n}0000 users.`, factIds: [fact] }, { text: "Best regards,", factIds: [], kind: "boilerplate" }] });
   beginSend(db, emailId, H);
   finishSend(db, emailId, messageId, H);
   return { agent, jobId, contactId, emailId, messageId, co };

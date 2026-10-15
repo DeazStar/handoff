@@ -36,7 +36,7 @@ describe("links the user gave", () => {
   it("do not use the discovery limit, and have their own allowance", async () => {
     await call("add_candidate_job", job(1, { userProvided: true }));
     await call("add_candidate_job", job(2, { userProvided: true }));
-    expect((await call("get_budget")).data).toEqual({ limit: 2, addedToday: 0, remaining: 2, userLinks: { limit: 3, addedToday: 2, remaining: 1 } });
+    expect((await call("get_budget")).data).toEqual({ limit: 2, addedToday: 0, remaining: 2, userLinks: { limit: 3, addedToday: 2, remaining: 1 }, applications: expect.objectContaining({ remaining: expect.any(Number) }) });
     // the discovery limit of 2 is still all there for the agent's own finds
     expect((await call("add_candidate_job", job(3))).error).toBe(false);
     expect((await call("add_candidate_job", job(4))).error).toBe(false);
@@ -118,9 +118,92 @@ describe("accounts: what the agent can and cannot do", () => {
     expect((await call("request_account", { jobId: null, pageUrl: "https://acme.example/s", mode: "signup", passwordRules: { minLength: 12, password: "x" } })).error).toBe(true);
   });
 
+  it("can ask for a profile to be filled in, once, and has no way to fill it itself", async () => {
+    const job = await call("add_candidate_job", { title: "E", url: "https://acme.example/jobs/2" });
+    const r = await call("request_profile_fill", { jobId: job.data.id, pageUrl: "https://acme.example/profile", note: "Complete the candidate profile" });
+    expect(r.error).toBe(false);
+    expect(r.data).toMatchObject({ site: "acme.example", alreadyOpen: false });
+    expect((await call("request_profile_fill", { jobId: job.data.id, pageUrl: "https://acme.example/profile" })).data.alreadyOpen).toBe(true);
+    expect((await call("request_profile_fill", { jobId: null, pageUrl: "nope" })).error).toBe(true);
+    const card = (db.prepare("SELECT payload FROM action_queue").all() as { payload: string }[]).map((x) => JSON.parse(x.payload)).find((p) => p.mode === "profile");
+    expect(card).toMatchObject({ site: "acme.example", note: "Complete the candidate profile" });
+  });
+
   it("is told never to touch a password", () => {
     const text = client.getInstructions() ?? "";
     expect(text).toMatch(/never type, read, copy or screenshot a password field/);
     expect(text).toMatch(/request_account/);
+    expect(text).toMatch(/\/profile command/);
+  });
+});
+
+describe("questions only the user can answer", () => {
+  const OPTIONS = ["not interested in equity", "some equity at a promising company", "equity is very important"];
+  it("asks once, with the page's options, and learns when the user has answered", async () => {
+    const r = await call("ask_user", { jobId: null, question: "Equity preference", options: OPTIONS, site: "https://www.workatastartup.com/profile" });
+    expect(r.error).toBe(false);
+    expect(r.data.alreadyOpen).toBe(false);
+    expect((await call("ask_user", { jobId: null, question: "Equity preference" })).data.alreadyOpen).toBe(true);
+    createHumanApi(db).setStandardAnswer("Equity preference", OPTIONS[1]!);
+    const again = await call("ask_user", { jobId: null, question: "Equity preference" });
+    expect(again.error).toBe(true);
+    expect(again.text).toMatch(/already answered this/);
+  });
+  it("refuses a bad question and cannot answer for the user", async () => {
+    expect((await call("ask_user", { jobId: null, question: "Q", options: ["one"] })).error).toBe(true);
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    expect(names).not.toContain("set_standard_answer");
+    expect(names.filter((n) => /standard_answer/.test(n))).toEqual([]);
+  });
+  it("is told to ask instead of guess, and where a skill level comes from", () => {
+    const text = client.getInstructions() ?? "";
+    expect(text).toMatch(/call ask_user with the question/);
+    expect(text).toMatch(/defaultSkillLevel in get_cv_material/);
+  });
+});
+
+describe("keeping what the user said in chat", () => {
+  it("proposes it, and the agent has no way to save it itself", async () => {
+    const r = await call("remember", { jobId: null, type: "answer", label: "Equity preference", original: "some equity but not crucial", polished: "I would like some equity, but it is not crucial." });
+    expect(r.error).toBe(false);
+    expect(r.data.alreadyOpen).toBe(false);
+    expect(createHumanApi(db).listStandardAnswers()).toEqual([]); // proposed, not saved
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    expect(names.filter((n) => /save_answer|set_standard|add_fact|save_fact/.test(n))).toEqual([]);
+  });
+  it("refuses polished wording with an invented number", async () => {
+    const r = await call("remember", { jobId: null, type: "fact", kind: "achievement", original: "made it a lot faster", polished: "Made it 10x faster." });
+    expect(r.error).toBe(true);
+    expect(r.text).toMatch(/did not say/);
+  });
+  it("is told to polish without adding, to keep exact words when asked, and to propose saving", () => {
+    const text = client.getInstructions() ?? "";
+    expect(text).toMatch(/without adding anything they did not say/);
+    expect(text).toMatch(/exact words/);
+    expect(text).toMatch(/call remember/);
+  });
+});
+
+describe("recording a job's level", () => {
+  it("takes the level with the score, and refuses one that is not a level", async () => {
+    const j = await call("add_candidate_job", { title: "Lead Engineer", url: "https://acme.example/jobs/77" });
+    await call("record_verification", { jobId: j.data.id, result: "live" });
+    expect((await call("set_match", { jobId: j.data.id, score: 6, reason: "fits", seniority: "lead" })).error).toBe(false);
+    expect((await call("get_job", { jobId: j.data.id })).data.job.seniority).toBe("lead");
+    expect((await call("set_match", { jobId: j.data.id, score: 6, reason: "fits", seniority: "minor" })).error).toBe(true);
+  });
+});
+
+describe("the agent is told how to ask", () => {
+  it("knows the four ways, batches by default and reads the user's choice", () => {
+    const text = client.getInstructions() ?? "";
+    expect(text).toMatch(/questionMode and questionOverrides from get_preferences/);
+    expect(text).toMatch(/batch \(the default\)/);
+    expect(text).toMatch(/ONE message at the end/);
+    expect(text).toMatch(/never means do not ask/);
+  });
+  it("reads the setting from the preferences it can see", async () => {
+    createHumanApi(db).setPreferences({ roles: [], seniority: [], locations: [], remotePolicy: "any", industries: [], exclusions: [], dailyApplicationLimit: 5, dailyDiscoveryLimit: 5, searchAnySite: true, questionMode: "chat", questionOverrides: { skill_levels: "never" } });
+    expect((await call("get_preferences")).data).toMatchObject({ questionMode: "chat", questionOverrides: { skill_levels: "never" } });
   });
 });

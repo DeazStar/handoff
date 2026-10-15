@@ -1,6 +1,10 @@
+import { assertWellWritten } from "./writingLint.js";
+import { COVER_OPENING, ECHO_POSTING, employerNames, firstName } from "./cover.js";
+import { experienceSummary, listEntries } from "./cv.js";
+import { yearsCheck } from "./cvPlan.js";
 import type { DB } from "./db.js";
 import { queueAction } from "./actionQueue.js";
-import { listDocuments, saveDocument, type Block } from "./documents.js";
+import { listDocuments, numberTokens, saveDocument, type Block } from "./documents.js";
 import { logEvent, transitionJob } from "./jobs.js";
 import { getProfile, requireHuman } from "./profile.js";
 import type { Actor, JobState } from "./states.js";
@@ -29,7 +33,7 @@ export interface Contact {
   /** For pattern contacts: the real address, its owner and the page that the derivation rests on. */
   evidence?: { pattern: string; exampleEmail: string; exampleName: string; exampleUrl: string };
   /** The server could not open the page; the agent read it in a real browser and quoted the line with the address. */
-  browserEvidence?: { quote: string; pageUrl: string };
+  browserEvidence?: { quote: string; pageUrl: string; rule?: string };
 }
 
 const toContact = (r: any): Contact => ({
@@ -54,7 +58,7 @@ const toContact = (r: any): Contact => ({
  */
 export function addContact(
   db: DB,
-  c: { companyId: number; email: string; name?: string; role?: string; sourceUrl?: string; personId?: number; verification?: "on_page" | "pattern"; evidence?: Contact["evidence"]; browserEvidence?: { quote: string; pageUrl: string } },
+  c: { companyId: number; email: string; name?: string; role?: string; sourceUrl?: string; personId?: number; verification?: "on_page" | "pattern"; evidence?: Contact["evidence"]; browserEvidence?: { quote: string; pageUrl: string; rule?: string } },
   actor: Actor,
 ): number {
   const email = c.email.trim().toLowerCase();
@@ -119,6 +123,46 @@ function checkSubject(subject: string) {
  * The agent's draft. The body is saved as a document, so every claim must cite the user's facts and every
  * number must match. Saving a draft queues it for the user and moves the job to awaiting approval. It sends nothing.
  */
+export const EMAIL_LIMITS = { wordsWithLetter: 70, wordsWithoutLetter: 110, employersWithLetter: 1, employersWithoutLetter: 2, numbersWithLetter: 1, numbersWithoutLetter: 2, signOff: "Best regards," } as const;
+
+/**
+ * The shape of an application email: the exact greeting, a body that starts "I'm applying for the... at...", the sign-off, and short.
+ * With a cover letter attached the email is only a covering note: it must not retell the letter. Returns every problem and the greeting expected.
+ */
+export function emailShapeProblems(db: DB, blocks: Block[], contactName: string | null | undefined, hasLetter: boolean): { problems: string[]; allow: string[][] } {
+  const problems: string[] = [];
+  const greeting = contactName?.trim() ? `Dear ${firstName(contactName)},` : "Dear Hiring Manager,";
+  const first = blocks[0];
+  const last = blocks[blocks.length - 1];
+  if (!first || first.kind !== "boilerplate" || first.text.trim() !== greeting) problems.push(`the first block must be the greeting, kind boilerplate, exactly "${greeting}"`);
+  if (!last || last.kind !== "boilerplate" || last.text.trim() !== EMAIL_LIMITS.signOff) problems.push(`the last block must be the sign-off, kind boilerplate, exactly "${EMAIL_LIMITS.signOff}" (do not write your name or contact details: they are added)`);
+  const body = blocks.slice(1, -1);
+  const allow: string[][] = blocks.map(() => []);
+  if (!body.length) { problems.push("there is no body between the greeting and the sign-off"); return { problems, allow }; }
+  const text = body.map((b) => b.text.trim()).join(" ");
+  if (!COVER_OPENING.test(body[0]!.text)) problems.push("the body must start \"I'm applying for the <role> at <company>.\"");
+  const words = text.split(/\s+/).length;
+  const max = hasLetter ? EMAIL_LIMITS.wordsWithLetter : EMAIL_LIMITS.wordsWithoutLetter;
+  if (words > max) problems.push(`the body is ${words} words; keep it under ${max}${hasLetter ? ". The cover letter is attached and carries the detail: do not retell it" : ""}`);
+  if (hasLetter && !/\battached\b/i.test(text)) problems.push("say that the CV and the cover letter are attached");
+  if (ECHO_POSTING.test(text)) problems.push("do not repeat the posting back; name the role once, in the first sentence");
+  const maxEmployers = hasLetter ? EMAIL_LIMITS.employersWithLetter : EMAIL_LIMITS.employersWithoutLetter;
+  const named = employerNames(db).filter((org) => new RegExp(`(?<![A-Za-z0-9])${org.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9])`, "i").test(text));
+  if (named.length > maxEmployers) problems.push(`it names ${named.length} employers (${named.join(", ")}); name at most ${maxEmployers}${hasLetter ? ": the letter tells the rest" : ""}`);
+  const years = experienceSummary(listEntries(db))?.years;
+  let numbers = 0;
+  blocks.forEach((b, i) => {
+    if (i === 0 || i === blocks.length - 1) return;
+    const yc = yearsCheck(b.text, years);
+    problems.push(...yc.problems);
+    allow[i] = yc.allow;
+    numbers += numberTokens(b.text).filter((n) => !yc.allow.includes(n)).length;
+  });
+  const maxNumbers = hasLetter ? EMAIL_LIMITS.numbersWithLetter : EMAIL_LIMITS.numbersWithoutLetter;
+  if (numbers > maxNumbers) problems.push(`it has ${numbers} numbers; keep at most ${maxNumbers} (the years of experience do not count)`);
+  return { problems, allow };
+}
+
 export function draftEmail(db: DB, d: DraftInput, actor: Actor): { emailId: number; documentId: number } {
   return db.transaction(() => {
     const job = db.prepare("SELECT id, title, company_id, route, state FROM jobs WHERE id = ?").get(d.jobId) as
@@ -133,6 +177,11 @@ export function draftEmail(db: DB, d: DraftInput, actor: Actor): { emailId: numb
     if (contact.companyId !== job.company_id) throw new Error("That contact belongs to a different company");
     if (contact.status === "bounced") throw new Error("That address bounced before. Find another contact");
 
+    const hasLetter = listDocuments(db, d.jobId).some((x) => x.kind === "cover");
+    const shape = emailShapeProblems(db, d.blocks, contact.name, hasLetter);
+    if (shape.problems.length) throw new Error(`The email does not follow the format. Rewrite it and try again:\n- ${shape.problems.join("\n- ")}`);
+    d = { ...d, blocks: d.blocks.map((b, i) => (shape.allow[i]!.length ? { ...b, allowNumbers: shape.allow[i] } : b)) };
+    assertWellWritten([d.blocks.slice(1, -1).map((b) => b.text.trim()).join(" ")], "The email");
     const cvs = listDocuments(db, d.jobId).filter((x) => x.kind === "cv");
     const cv = d.attachCvDocumentId ? cvs.find((x) => x.id === d.attachCvDocumentId) : cvs.sort((a, b) => b.version - a.version)[0];
     if (!cv) throw new Error("There is no CV for this job to attach. Run the tailoring first");
@@ -193,12 +242,14 @@ export interface EmailDetail {
 function signature(db: DB): string {
   const p = getProfile(db);
   if (!p) return "";
-  return ["", p.fullName, p.phone, p.email].filter((x) => x !== undefined && x !== null && x !== "").join("\n");
+  return ["", p.fullName, p.email].filter((x) => x !== undefined && x !== null && x !== "").join("\n");
 }
 
 /** The email as the agent wrote it: one paragraph per block, then the user's name and contact details. */
 export function composeBody(db: DB, blocks: Block[]): string {
-  return blocks.map((b) => b.text).join("\n\n") + "\n" + signature(db);
+  // The greeting and the sign-off stand alone; everything between them is one paragraph, so a body written in two or three blocks reads as one note.
+  const parts = blocks.length > 2 ? [blocks[0]!.text, blocks.slice(1, -1).map((b) => b.text.trim()).join(" "), blocks[blocks.length - 1]!.text] : blocks.map((b) => b.text);
+  return parts.join("\n\n") + "\n" + signature(db);
 }
 
 function sameSite(a: string, b: string): boolean {
@@ -278,7 +329,22 @@ export function discardEmail(db: DB, id: number, actor: Actor): void {
 
 /** How many applications have gone out today, by the user's local day. */
 export function applicationsToday(db: DB): number {
-  return (db.prepare("SELECT COUNT(*) AS n FROM applications WHERE date(sent_at, 'localtime') = date('now', 'localtime')").get() as { n: number }).n;
+  const since = countResetAt(db);
+  return (db.prepare("SELECT COUNT(*) AS n FROM applications WHERE date(sent_at, 'localtime') = date('now', 'localtime') AND sent_at > ?").get(since) as { n: number }).n;
+}
+
+/** When the user last reset the daily count ("" if never), so everything before it is left out of the count. */
+export function countResetAt(db: DB): string {
+  const r = db.prepare("SELECT application_count_reset_at AS t FROM preferences WHERE id = 1").get() as { t: string | null } | undefined;
+  return r?.t ?? "";
+}
+
+/** Only the user can reset the count: it is the guard on what Claude may prepare and send. */
+export function resetApplicationCount(db: DB, actor: Actor): void {
+  requireHuman(actor, "the daily limit");
+  const info = db.prepare("UPDATE preferences SET application_count_reset_at = datetime('now') WHERE id = 1").run();
+  if (info.changes === 0) throw new Error("Save your settings once first (Settings), then the count can be reset");
+  logEvent(db, actor, "application_count_reset", null, {});
 }
 
 /** Claims the email for sending. Only one caller can: a double click gets an error and sends nothing. */

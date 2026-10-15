@@ -22,7 +22,8 @@ const TRANSITIONS: Record<JobState, Partial<Record<JobState, Actor[]>>> = {
   found: { verified_live: ["agent", "system"], dead: ["agent", "system"], skipped: ["agent", "human"] },
   verified_live: { matched: ["agent", "system"], skipped: ["agent", "human"], dead: ["agent", "system"] },
   matched: { materials_ready: ["agent", "system"], skipped: ["agent", "human"], dead: ["agent", "system"] },
-  materials_ready: { awaiting_approval: ["agent", "system"], skipped: ["agent", "human"], dead: ["agent", "system"] },
+  // matched: the user sends a job back so its CV, letter and email or form are made again (for example after the writing rules changed).
+  materials_ready: { awaiting_approval: ["agent", "system"], matched: ["human"], skipped: ["agent", "human"], dead: ["agent", "system"] },
   awaiting_approval: { applied: ["human"], materials_ready: ["human"], skipped: ["human"], dead: ["agent", "human"] },
   applied: { replied: ["agent", "human", "system"], no_response: ["agent", "human", "system"], rejected: ["agent", "human"] },
   replied: { interview: ["human"], rejected: ["agent", "human"] },

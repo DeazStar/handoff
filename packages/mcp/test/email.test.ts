@@ -46,7 +46,7 @@ beforeEach(async () => {
   agent.setMatch(jobId, 8, "fits");
   agent.setRoute(jobId, "email");
   saveDocument(db, { jobId, kind: "cv", path: "documents/job-1-cv-v1.pdf", blocks: [{ text: "Built a payments API serving 50000 users", factIds: [facts] }] }, "agent");
-  saveDocument(db, { jobId, kind: "cover", path: "documents/job-1-cover-v1.pdf", blocks: [{ text: "Dear Hiring Team,", factIds: [], kind: "boilerplate" }, { text: "I built a payments API serving 50000 users.", factIds: [facts] }] }, "agent");
+  saveDocument(db, { jobId, kind: "cover", path: "documents/job-1-cover-v1.pdf", blocks: [{ text: "Dear Hiring Team,", factIds: [], kind: "boilerplate" }, { text: "I'm applying for the Backend Engineer role at Acme. I built a payments API serving 50000 users. My CV and cover letter are attached.", factIds: [facts] }] }, "agent");
   agent.transitionJob(jobId, "materials_ready");
   const [a, b] = InMemoryTransport.createLinkedPair();
   await createMcpServer(db, { dataDir: mkdtempSync(join(tmpdir(), "jobhunt-email-")), verifier }).connect(a);
@@ -88,8 +88,8 @@ describe("finding a contact", () => {
 
 describe("drafting", () => {
   const blocks = () => [
-    { text: "Dear hiring team,", factIds: [], kind: "boilerplate" },
-    { text: "I built a payments API serving 50000 users and would like to apply.", factIds: [facts] },
+    { text: "Dear Hiring Manager,", factIds: [], kind: "boilerplate" },
+    { text: "I'm applying for the Backend Engineer role at Acme. I built a payments API serving 50000 users. My CV and cover letter are attached.", factIds: [facts] },
     { text: "Best regards,", factIds: [], kind: "boilerplate" },
   ];
 
@@ -108,7 +108,7 @@ describe("drafting", () => {
 
   it("refuses an invented number, a bounced address, and a second draft", async () => {
     const contactId = (await call("add_contact", { companyId, email: "jobs@acme.example", sourceUrl: "https://acme.example/careers" })).data.contactId;
-    const invented = await call("draft_email", { jobId, contactId, blocks: [{ text: "I served 90000 users", factIds: [facts] }] });
+    const invented = await call("draft_email", { jobId, contactId, blocks: [{ text: "Dear Hiring Manager,", factIds: [], kind: "boilerplate" }, { text: "I'm applying for the Backend Engineer role at Acme. I served 90000 users. My CV and cover letter are attached.", factIds: [facts] }, { text: "Best regards,", factIds: [], kind: "boilerplate" }] });
     expect(invented.error).toBe(true);
     expect(invented.text).toMatch(/90000/);
     expect((await call("draft_email", { jobId, contactId, blocks: blocks(), subject: "Two\nlines" })).error).toBe(true);
@@ -170,6 +170,19 @@ describe("a site the server cannot open", () => {
     const r = await add({ email: "recruitment@acme.example", sourceUrl: page, browserEvidence: { quote } });
     expect(r.error).toBe(true);
     expect(r.text).toMatch(/does not appear on/);
+  });
+
+  it("takes an address quoted from the job's own posting even on a third-party host, when the server only sees an empty shell", async () => {
+    await blocked({ hasMail: async () => true, fetchPage: async () => "<div id='root'></div>" });
+    const posting = "https://acme.notion.site/Backend-Engineer-99";
+    const jobId = createAgentApi(db).addCandidateJob({ title: "Backend", url: posting, canonicalUrl: posting, companyId }).id;
+    const q = "Send your CV to people@acme-hr.example";
+    // without the job it is refused, and a different page is refused even with the job
+    expect((await add({ email: "people@acme-hr.example", sourceUrl: posting, browserEvidence: { quote: q } })).text).toMatch(/does not appear on/);
+    expect((await add({ email: "people@acme-hr.example", sourceUrl: "https://acme.notion.site/Other", jobId, browserEvidence: { quote: q } })).text).toMatch(/does not appear on/);
+    const r = await add({ email: "people@acme-hr.example", sourceUrl: posting, jobId, browserEvidence: { quote: q } });
+    expect(r.error).toBe(false);
+    expect(getContactById(r.data.contactId)).toMatchObject({ email: "people@acme-hr.example", browserEvidence: { quote: q, pageUrl: posting, rule: "posting_page" } });
   });
 
   it("still takes a normal address from a page the server can read, with no quote needed", async () => {

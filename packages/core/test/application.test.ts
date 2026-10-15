@@ -105,19 +105,40 @@ describe("preparing a form application", () => {
     expect((listOpenActions(s.db) as any[]).filter((a) => a.kind === "confirm_submit")).toHaveLength(1);
   });
 
-  it("stops at the daily limit, counting what is waiting for the user", () => {
+  it("checks the daily limit before a form is filled, counting what is waiting, and never when recording one", () => {
     const s = setup();
     setPreferences(s.db, prefs({ dailyApplicationLimit: 1 }), H);
-    s.agent.prepareApplication(s.input());
     const other = s.agent.addCandidateJob({ title: "Other", url: "https://b.io/1", canonicalUrl: "https://b.io/1" }).id;
     s.agent.recordVerification(other, { result: "live" }); s.agent.setMatch(other, 7, "ok"); s.agent.setRoute(other, "form");
     saveDocument(s.db, { jobId: other, kind: "cv", path: "documents/job-2-cv-v1.pdf", blocks: [{ text: "Built a payments API serving 50000 users", factIds: [s.fact] }] }, "agent");
     s.agent.transitionJob(other, "materials_ready");
-    expect(throws(() => s.agent.prepareApplication(s.input({ jobId: other })))).toMatch(/Daily limit reached \(1 of 1/);
-    s.human.markApplicationSubmitted(s.jobId); // submitted today still counts
-    expect(throws(() => s.agent.prepareApplication(s.input({ jobId: other })))).toMatch(/Daily limit reached/);
-    setPreferences(s.db, prefs({ dailyApplicationLimit: 2 }), H);
-    s.agent.prepareApplication(s.input({ jobId: other }));
+    s.agent.assertApplicationRoom(other); // nothing used yet
+    s.agent.prepareApplication(s.input());
+    expect(s.agent.applicationRoom()).toEqual({ limit: 1, used: 1, remaining: 0 });
+    expect(throws(() => s.agent.assertApplicationRoom(other))).toMatch(/Daily limit reached \(1 of 1.*Do not fill/);
+    s.agent.assertApplicationRoom(s.jobId); // a refill of the prepared form is not a new application
+    // A form that was filled before the limit was known is still recorded.
+    expect(() => s.agent.prepareApplication(s.input({ jobId: other }))).not.toThrow();
+  });
+
+  it("refuses a long free-text message that breaks the writing guide, and lets a plain one through", () => {
+    const s = setup();
+    const msg = (answer: string) => s.input({ answers: [{ question: "Message to the founder", answer, kind: "free_text", factIds: [s.fact] }] });
+    const bad = "Hi Carlos, I'm Naod. I built a payments API serving 50000 users in TypeScript and Node.js at my last company. I would need visa sponsorship, and I see you offer it, which is why I am applying here today.";
+    expect(throws(() => s.agent.prepareApplication(msg(bad)))).toMatch(/does not follow the writing guide[\s\S]*opens with the user[\s\S]*narrates the application/);
+    const good = "Hi Carlos, I'm applying for the Product Engineer role at Wallets Inc. I built a payments API serving 50000 users, and I would bring that to your product from day one. I'd need visa sponsorship. Happy to talk if it looks like a fit.";
+    expect(() => s.agent.prepareApplication(msg(good))).not.toThrow();
+  });
+
+  it("lets only the user reset the count, which frees the room again", () => {
+    const s = setup();
+    setPreferences(s.db, prefs({ dailyApplicationLimit: 1 }), H);
+    s.agent.prepareApplication(s.input());
+    expect(s.agent.applicationRoom().remaining).toBe(0);
+    expect((s.agent as any).resetApplicationCount).toBeUndefined();
+    s.human.resetApplicationCount();
+    expect(s.human.applicationRoom().remaining).toBe(1);
+    expect(s.agent.applicationRoom()).toEqual({ limit: 1, used: 0, remaining: 1 });
   });
 });
 
@@ -198,5 +219,40 @@ describe("standard answers", () => {
     setPreferences(db, prefs({ salaryPeriod: "year" }), H);
     expect(createAgentApi(db).getPreferences()!.salaryPeriod).toBe("year");
     expect(throws(() => setPreferences(db, prefs({ salaryPeriod: "week" }), H))).toMatch(/month or year/);
+  });
+});
+
+describe("refilling a form whose browser tab was lost", () => {
+  it("records the same form again while it is waiting, without moving the job or doubling the queue", () => {
+    const s = setup();
+    s.agent.prepareApplication(s.input());
+    expect((s.db.prepare("SELECT state FROM jobs WHERE id = ?").get(s.jobId) as { state: string }).state).toBe("awaiting_approval");
+    const prepared = s.agent.getPreparedApplication(s.jobId);
+    expect(prepared.formUrl).toBe("https://acme.example/apply/1");
+    expect(prepared.answers.map((a) => a.question)).toEqual(["Full name", "Do you need visa sponsorship?", "Why do you want to work here?"]);
+    // the agent puts the stored answers back and records them again
+    s.agent.prepareApplication(s.input({ answers: prepared.answers.map(({ check, checkNote, ...a }) => a), leftBlank: prepared.leftBlank }));
+    expect((s.db.prepare("SELECT state FROM jobs WHERE id = ?").get(s.jobId) as { state: string }).state).toBe("awaiting_approval");
+    expect((s.agent.listOpenActions() as any[]).filter((a) => a.kind === "confirm_submit")).toHaveLength(1);
+    expect(s.db.prepare("SELECT COUNT(*) AS n FROM events WHERE type = 'application_refilled'").get()).toEqual({ n: 1 });
+    expect(s.db.prepare("SELECT COUNT(*) AS n FROM applications").get()).toEqual({ n: 1 });
+  });
+
+  it("does not count against the daily limit twice", () => {
+    const s = setup();
+    setPreferences(s.db, prefs({ dailyApplicationLimit: 1 }), H);
+    s.agent.prepareApplication(s.input());
+    expect(() => s.agent.prepareApplication(s.input())).not.toThrow();
+  });
+
+  it("is refused once submitted, for a job not waiting, and for one with no prepared form", () => {
+    const s = setup();
+    expect(throws(() => s.agent.getPreparedApplication(s.jobId))).toMatch(/no prepared form waiting/);
+    s.agent.prepareApplication(s.input());
+    s.human.markApplicationSubmitted(s.jobId);
+    expect(throws(() => s.agent.getPreparedApplication(s.jobId))).toMatch(/no prepared form waiting/);
+    expect(throws(() => s.agent.prepareApplication(s.input()))).toMatch(/already submitted/);
+    const t = setup({ ready: false });
+    expect(throws(() => t.agent.prepareApplication(t.input()))).toMatch(/must be materials_ready/);
   });
 });

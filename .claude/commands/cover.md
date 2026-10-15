@@ -14,15 +14,17 @@ Argument given: `$ARGUMENTS`. A job id is required. If none was given, say "Give
 4. `get_cv_material` with `forJobId` set to the job: the user's facts and their ids. Everything you claim about the user comes from these.
 
 ## Write it
-Call `save_cover_letter` with `jobId`, optionally `contactId` (see below) and 2 to 4 paragraphs, 120 to 380 words in all:
-1. **First paragraph, a claim:** name the role and open with the user's strongest, most relevant experience, using the posting's own requirements. Cite the facts it rests on in `factIds`. Keep every number exactly as in the facts.
-2. **Middle paragraph or two, claims:** one or two more things the posting asks for that the facts support, each citing its facts. Specific, plain, no flattery, no buzzwords.
-3. **Why this company:** one short paragraph with no `factIds`, so no numbers. Say something true that the posting itself shows (its product, its stage, how it works). Do not invent anything about the company that the posting does not say.
-4. **Close:** a sentence or two, no `factIds`, no numbers.
+**Call `get_writing_guide` with `kind` `cover_letter` first and follow what it returns: the letter rules and examples in `.claude/writing/cover-letter.md`, the base guide, and the user's `writingStyle`, which comes first. The server refuses a letter that breaks its hard rules.**
 
-Follow `guidance` from the material. Do not write the greeting, sign-off, name, date or contact details: the server adds them.
+Call `save_cover_letter` with `jobId`, optionally `contactId` (see below) and 3 to 4 paragraphs, 180 to 300 words in all, in this shape:
+1. **Opening, a claim:** starts "I'm applying for the <role> at <company>." Then who the user is (the kind of engineer, the years, the stack that matches) and, only if true and specific, the part of the company's stack the user has used. Cite the facts in `factIds`.
+2. **The strongest experience, a claim:** one employer, one clear thing done, plain words.
+3. **A second experience, a claim (optional):** a different employer, with a real number from a fact if there is one (at most two numbers in the whole letter, besides the years). An honest tie to the job, never a forced one. Skip it rather than pad.
+4. **Close, no `factIds`, no numbers:** "Happy to talk if it looks like a fit. Thank you for your time and consideration." If the user needs visa sponsorship and the form and profile do not say so, one plain sentence before the thanks.
 
-**Who it is addressed to:** for an email job, pass the `contactId` of the person the email will go to if they have a name. For a form, or when there is no named contact, leave `contactId` out: it goes to the hiring team.
+Never open a paragraph by repeating the posting, never name a requirement the user lacks, never talk about the posting's wish list ("is a bonus for you"), and name each employer once. Follow `guidance` from the material. Do not write the greeting, sign-off, name, date, city or email: the server adds them.
+
+**Who it is addressed to:** for an email job, pass the `contactId` of the person the email will go to if they have a name. For a form, or when there is no named contact, leave `contactId` out: it goes to "Dear Hiring Manager,".
 
 If the server refuses the letter, read why, fix exactly that, and call it again, at most three times. If a requirement the posting asks for has no supporting fact, do not cover for it in the letter: call `report_gap`.
 

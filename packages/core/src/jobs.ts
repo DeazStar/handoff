@@ -104,6 +104,11 @@ export function transitionJob(
     );
     db.prepare("UPDATE transition_guard SET job_id = NULL, to_state = NULL").run();
     logEvent(db, actor, "state_changed", jobId, { from: row.state, to, reason });
+    // A job nobody will apply to leaves no work waiting on the user: its open cards (form to check, CAPTCHA, gaps, drafts) are closed.
+    if (to === "skipped" || to === "dead") {
+      const closed = db.prepare("UPDATE action_queue SET status = 'dismissed', resolved_at = datetime('now') WHERE job_id = ? AND status = 'open'").run(jobId).changes;
+      if (closed > 0) logEvent(db, actor, "actions_closed_with_job", jobId, { count: closed, to });
+    }
   })();
 }
 

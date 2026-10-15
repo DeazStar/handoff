@@ -170,7 +170,7 @@ describe("a derived address can be drafted at once", () => {
       companyId: co, email: "jane.doe@acme.example", sourceUrl: "https://acme.example/team", personId: jane, verification: "pattern", name: "Jane Doe", role: "Head of Engineering",
       evidence: { pattern: "first.last", exampleEmail: "sam.lee@acme.example", exampleName: "Sam Lee", exampleUrl: "https://acme.example/press" },
     });
-    const { emailId } = agent.draftEmail({ jobId, contactId, blocks: [{ text: "Dear Jane,", factIds: [], kind: "boilerplate" }, { text: "I built a payments API serving 50000 users.", factIds: [fact] }, { text: "Best regards,", factIds: [], kind: "boilerplate" }] });
+    const { emailId } = agent.draftEmail({ jobId, contactId, blocks: [{ text: "Dear Jane,", factIds: [], kind: "boilerplate" }, { text: "I'm applying for the Backend Engineer role at Acme. I built a payments API serving 50000 users.", factIds: [fact] }, { text: "Best regards,", factIds: [], kind: "boilerplate" }] });
     const e = getEmail(db, emailId)!;
     expect(e.status).toBe("draft");
     expect(e.contact).toMatchObject({ verification: "pattern", evidence: { pattern: "first.last", exampleEmail: "sam.lee@acme.example", exampleUrl: "https://acme.example/press" } });

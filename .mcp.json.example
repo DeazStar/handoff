@@ -10,14 +10,9 @@
       }
     },
     "playwright": {
-      "command": "npx",
+      "command": "node",
       "args": [
-        "-y",
-        "@playwright/mcp@0.0.83",
-        "--browser",
-        "chromium",
-        "--user-data-dir",
-        "${HOME}/.jobhunt/browser-profile"
+        "scripts/playwright-mcp.mjs"
       ]
     }
   }

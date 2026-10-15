@@ -594,4 +594,89 @@ ALTER TABLE preferences ADD COLUMN salary_period TEXT CHECK (salary_period IN ('
       ALTER TABLE accounts ADD COLUMN job_id INTEGER;
     `,
   },
+  {
+    id: 28,
+    name: "verification_mails",
+    // Mail that looks like a site checking an address, for an account the user just made. The link is a one-time key:
+    // it is dropped once used, and after 7 days.
+    sql: `
+      CREATE TABLE verification_mails (
+        id INTEGER PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL UNIQUE,
+        from_addr TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        received_at TEXT NOT NULL,
+        link TEXT,
+        link_host TEXT,
+        link_related INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','used','ignored')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `,
+  },
+  {
+    id: 29,
+    name: "skill_levels",
+    // A level the user states for a skill, for sites that ask for one. default_skill_level is used when a skill has none.
+    sql: `
+      ALTER TABLE facts ADD COLUMN skill_level TEXT CHECK (skill_level IN ('beginner','intermediate','advanced','expert'));
+      ALTER TABLE preferences ADD COLUMN default_skill_level TEXT CHECK (default_skill_level IN ('beginner','intermediate','advanced','expert'));
+    `,
+  },
+  {
+    id: 30,
+    name: "job_seniority",
+    // The level the posting asks for, recorded when the job is scored. How it fits the user's wanted levels is worked out when it is read.
+    sql: `ALTER TABLE jobs ADD COLUMN seniority TEXT CHECK (seniority IN ('intern','junior','mid','senior','lead','staff_plus'));`,
+  },
+  {
+    id: 31,
+    name: "question_modes",
+    // How the agent asks for an answer only the user can give: batch (all at the end, in the chat, and as cards), chat (at once, in the chat)
+    // or cards (only in Needs you). question_overrides: a mode per kind of question, or never.
+    sql: `
+      ALTER TABLE preferences ADD COLUMN question_mode TEXT NOT NULL DEFAULT 'batch' CHECK (question_mode IN ('batch','chat','cards'));
+      ALTER TABLE preferences ADD COLUMN question_overrides TEXT NOT NULL DEFAULT '{}';
+    `,
+  },
+  {
+    id: 32,
+    name: "application_count_reset",
+    // When the user last reset the daily application count. Applications sent and forms prepared before this moment no longer count against today's limit.
+    sql: `ALTER TABLE preferences ADD COLUMN application_count_reset_at TEXT;`,
+  },
+  {
+    id: 33,
+    name: "writing_style",
+    // How the user wants everything written for them to read: emails, cover letters and the free-text answers on forms.
+    sql: `ALTER TABLE preferences ADD COLUMN writing_style TEXT;`,
+  },
+  {
+    id: 34,
+    name: "cv_scores",
+    // The ATS score of a saved CV against its job's keywords, with the breakdown the dashboard shows.
+    sql: `
+      CREATE TABLE cv_scores (
+        document_id INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+        score INTEGER NOT NULL,
+        detail TEXT NOT NULL,
+        scored_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `,
+  },
+  {
+    id: 35,
+    name: "site_profiles",
+    // Whether a site's candidate profile is finished, so a run does not check it or ask for it again and again.
+    sql: `
+      CREATE TABLE site_profiles (
+        site TEXT PRIMARY KEY,
+        complete INTEGER NOT NULL CHECK (complete IN (0,1)),
+        source TEXT NOT NULL CHECK (source IN ('user','agent')),
+        evidence TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `,
+  },
 ];

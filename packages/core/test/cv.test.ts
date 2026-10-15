@@ -104,7 +104,7 @@ describe("prepareCv", () => {
   it("resolves a plan into what the renderer needs, in the order given", () => {
     const { db, acme, beta, proj, edu, a1, a2, b1, p1, skill } = setup();
     const { cv, blocks, factIds } = prepareCv(db, {
-      summary: [{ text: "Backend engineer who built a payments API serving 50000 users.", factIds: [a1] }],
+      summary: [{ text: "Backend engineer working on payments systems.", factIds: [a1] }],
       experience: [
         { entryId: beta, bullets: [b1] },
         { entryId: acme, bullets: [a2, { text: "Built a payments API for 50000 users", factIds: [a1] }] },

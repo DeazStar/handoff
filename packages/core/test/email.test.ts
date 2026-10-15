@@ -21,8 +21,8 @@ const setup = (opts: { domain?: string | null } = {}) => {
   agent.transitionJob(jobId, "materials_ready", "CV built");
   const contactId = agent.addContact({ companyId, email: "Jobs@Acme.example", sourceUrl: "https://acme.example/careers" });
   const blocks = [
-    { text: "Dear hiring team,", factIds: [], kind: "boilerplate" as const },
-    { text: "I built a payments API serving 50000 users and would like to apply for the Backend Engineer role.", factIds: [fact] },
+    { text: "Dear Hiring Manager,", factIds: [], kind: "boilerplate" as const },
+    { text: "I'm applying for the Backend Engineer role at Acme. I built a payments API serving 50000 users and would like to apply for the Backend Engineer role.", factIds: [fact] },
     { text: "Best regards,", factIds: [], kind: "boilerplate" as const },
   ];
   return { db, agent, human: createHumanApi(db), companyId, jobId, fact, cv, contactId, blocks };
@@ -131,7 +131,7 @@ describe("drafting", () => {
     const e = getEmail(s.db, emailId)!;
     expect(e).toMatchObject({ status: "draft", subject: "Application: Backend Engineer, Ada Lovelace", edited: false, attachment: { documentId: s.cv.id, version: 1 } });
     expect(e.contact.email).toBe("jobs@acme.example");
-    expect(e.bodyText).toBe("Dear hiring team,\n\nI built a payments API serving 50000 users and would like to apply for the Backend Engineer role.\n\nBest regards,\nAda Lovelace\n0911\nada@example.com");
+    expect(e.bodyText).toBe("Dear Hiring Manager,\n\nI'm applying for the Backend Engineer role at Acme. I built a payments API serving 50000 users and would like to apply for the Backend Engineer role.\n\nBest regards,\nAda Lovelace\nada@example.com");
     expect(s.agent.getDocument(documentId)).toMatchObject({ kind: "email", version: 1 });
     const open = listOpenActions(s.db) as any[];
     expect(open.map((a) => a.kind)).toEqual(["approve_email"]);
@@ -145,8 +145,8 @@ describe("drafting", () => {
     expect(draft({ jobId: 999 })).toMatch(/not found/);
     expect(draft({ contactId: 999 })).toMatch(/Contact 999 not found/);
     expect(draft({ subject: "Hi\r\nBcc: evil@x.example" })).toMatch(/one line/);
-    expect(draft({ blocks: [{ text: "I served 90000 users", factIds: [s.fact] }] })).toMatch(/90000/);
-    expect(draft({ blocks: [{ text: "I led a big team", factIds: [] }] })).toMatch(/cites no fact/);
+    expect(draft({ blocks: [{ text: "Dear Hiring Manager,", factIds: [], kind: "boilerplate" }, { text: "I'm applying for the Backend Engineer role at Acme. I served 90000 users.", factIds: [s.fact] }, { text: "Best regards,", factIds: [], kind: "boilerplate" }] })).toMatch(/90000/);
+    expect(draft({ blocks: [{ text: "Dear Hiring Manager,", factIds: [], kind: "boilerplate" }, { text: "I'm applying for the Backend Engineer role at Acme. I led a big team.", factIds: [] }, { text: "Best regards,", factIds: [], kind: "boilerplate" }] })).toMatch(/cites no fact/);
     const other = s.agent.upsertCompany({ name: "Other", domain: "other.example" });
     const stranger = s.agent.addContact({ companyId: other, email: "hr@other.example", sourceUrl: "https://other.example/c" });
     expect(draft({ contactId: stranger })).toMatch(/different company/);

@@ -1,3 +1,5 @@
+import { QUESTION_CATEGORIES, QUESTION_MODES, type QuestionCategory, type QuestionMode } from "./questions.js";
+import { normalizeSeniority, SENIORITY_LABELS, SENIORITY_LEVELS } from "./levels.js";
 import { PRIORITY_MODES, type PriorityMode } from "./priority.js";
 import type { DB } from "./db.js";
 import { requireCountry } from "./countries.js";
@@ -54,12 +56,20 @@ export interface Preferences {
   replySnippetDays?: number;
   /** Check the mailbox for replies this often while the dashboard is open and the vault unlocked. 0 means only when asked. Default 0. */
   replyCheckMinutes?: number;
+  /** How the agent asks for an answer only the user can give. batch: everything at the end, in one chat message, and as cards. chat: at once, in the chat. cards: only in Needs you. Default batch. */
+  questionMode?: QuestionMode;
+  /** A different way for one kind of question, or never (use the default or skip it). */
+  questionOverrides?: Partial<Record<QuestionCategory, QuestionMode | "never">>;
+  /** The level given to a skill that has none, when a site asks for one. Unset: the agent asks. */
+  defaultSkillLevel?: "beginner" | "intermediate" | "advanced" | "expert";
   /** How the agent answers a cookie banner on a site it visits. accept: click "Accept all" so the page is not blocked. necessary: only strictly necessary cookies. Default accept. */
   cookieBanners?: "accept" | "necessary";
   /** auto: a cover letter for every email job and for forms that ask. off: none. Default auto. */
   coverLetters?: "auto" | "off";
   /** Free text about how cover letters should read, e.g. tone and what to lead with. */
   coverGuidance?: string;
+  /** How everything written in the user's name should read, in their words. */
+  writingStyle?: string;
   /** What ranks first: remote_first (worldwide remote on top), sponsored_first, or balanced. Default remote_first. */
   priorityMode?: PriorityMode;
   /** Whether the salary range is per month or per year. Needed before any salary is quoted on a form. */
@@ -165,6 +175,9 @@ export function getPreferences(db: DB): Preferences | null {
     priorityMode: r.priority_mode,
     coverLetters: r.cover_letters,
     cookieBanners: r.cookie_banners,
+    defaultSkillLevel: r.default_skill_level ?? undefined,
+    questionMode: r.question_mode,
+    questionOverrides: JSON.parse(r.question_overrides ?? "{}"),
     autoMarkReplied: r.auto_mark_replied === 1,
     followUpDays: r.follow_up_days,
     maxFollowUps: r.max_follow_ups,
@@ -172,6 +185,7 @@ export function getPreferences(db: DB): Preferences | null {
     replySnippetDays: r.reply_snippet_days,
     replyCheckMinutes: r.reply_check_minutes,
     coverGuidance: r.cover_guidance ?? undefined,
+    writingStyle: r.writing_style ?? undefined,
     researchMinScore: r.research_min_score,
     researchScope: r.research_scope,
     batchSize: r.batch_size,
@@ -202,6 +216,7 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
   if (p.priorityMode !== undefined && !PRIORITY_MODES.includes(p.priorityMode)) throw new Error("priorityMode must be remote_first, sponsored_first or balanced");
   if (p.coverLetters !== undefined && !["auto", "off"].includes(p.coverLetters)) throw new Error("coverLetters must be auto or off");
   if ((p.coverGuidance?.length ?? 0) > 1000) throw new Error("Cover letter guidance can be at most 1000 characters");
+  if ((p.writingStyle?.length ?? 0) > 1500) throw new Error("The writing style can be at most 1500 characters");
   const whole = (v: number | undefined, name: string, min: number, max: number) => {
     if (v !== undefined && (!Number.isInteger(v) || v < min || v > max)) throw new Error(`${name} must be a whole number from ${min} to ${max}`);
   };
@@ -212,6 +227,20 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
   whole(p.replyCheckMinutes, "Check replies every (minutes)", 0, 1440);
   if (p.noResponseDays !== undefined && p.noResponseDays !== 0 && p.followUpDays !== undefined && p.noResponseDays < p.followUpDays) throw new Error("No response after must be later than follow up after");
   if (p.cookieBanners !== undefined && !["accept", "necessary"].includes(p.cookieBanners)) throw new Error("cookieBanners must be accept or necessary");
+  if (p.defaultSkillLevel !== undefined && !["beginner", "intermediate", "advanced", "expert"].includes(p.defaultSkillLevel)) throw new Error("defaultSkillLevel must be beginner, intermediate, advanced or expert");
+  const seniority = [...new Set(p.seniority.map((x) => {
+    const n = normalizeSeniority(x);
+    if (!n) throw new Error(`"${x}" is not a level. Choose from: ${SENIORITY_LEVELS.map((l) => SENIORITY_LABELS[l]).join(", ")}`);
+    return n;
+  }))];
+  if (p.questionMode !== undefined && !QUESTION_MODES.includes(p.questionMode)) throw new Error("questionMode must be batch, chat or cards");
+  const questionOverrides: Record<string, string> = {};
+  for (const [k, v] of Object.entries(p.questionOverrides ?? {})) {
+    if (!(QUESTION_CATEGORIES as readonly string[]).includes(k)) throw new Error(`"${k}" is not a kind of question`);
+    if (v === undefined) continue;
+    if (![...QUESTION_MODES, "never"].includes(v as string)) throw new Error(`The way to ask about ${k} must be batch, chat, cards or never`);
+    questionOverrides[k] = v as string;
+  }
   const bs = p.batchSize ?? 10;
   if (!Number.isInteger(bs) || bs < 1 || bs > 20) throw new Error("batchSize must be a whole number from 1 to 20");
   const types = dedupeList(p.employmentPriority ?? []).map((t) => t.toLowerCase());
@@ -219,19 +248,19 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
   if (bad) throw new Error(`Employment priority can list full_time, part_time, contract and freelance, not "${bad}"`);
   db.prepare(
     `INSERT INTO preferences (id, roles, seniority, locations, remote_policy, industries, exclusions,
-       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit, search_any_site, cv_guidance, country_priority, employment_priority, bcc_self, research_min_score, research_scope, batch_size, salary_period, consent_default, priority_mode, cover_letters, cover_guidance, cookie_banners, auto_mark_replied, follow_up_days, max_follow_ups, no_response_days, reply_snippet_days, reply_check_minutes)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       salary_floor, salary_target, salary_ceiling, currency, daily_application_limit, daily_discovery_limit, search_any_site, cv_guidance, country_priority, employment_priority, bcc_self, research_min_score, research_scope, batch_size, salary_period, consent_default, priority_mode, cover_letters, cover_guidance, cookie_banners, default_skill_level, question_mode, question_overrides, auto_mark_replied, follow_up_days, max_follow_ups, no_response_days, reply_snippet_days, reply_check_minutes)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        roles = excluded.roles, seniority = excluded.seniority, locations = excluded.locations,
        remote_policy = excluded.remote_policy, industries = excluded.industries,
        exclusions = excluded.exclusions, salary_floor = excluded.salary_floor,
        salary_target = excluded.salary_target, salary_ceiling = excluded.salary_ceiling,
        currency = excluded.currency, daily_application_limit = excluded.daily_application_limit,
-       daily_discovery_limit = excluded.daily_discovery_limit, search_any_site = excluded.search_any_site, cv_guidance = excluded.cv_guidance, country_priority = excluded.country_priority, employment_priority = excluded.employment_priority, bcc_self = excluded.bcc_self, research_min_score = excluded.research_min_score, research_scope = excluded.research_scope, batch_size = excluded.batch_size, salary_period = excluded.salary_period, consent_default = excluded.consent_default, priority_mode = excluded.priority_mode, cover_letters = excluded.cover_letters, cookie_banners = excluded.cookie_banners, cover_guidance = excluded.cover_guidance, auto_mark_replied = excluded.auto_mark_replied, follow_up_days = excluded.follow_up_days, max_follow_ups = excluded.max_follow_ups, no_response_days = excluded.no_response_days, reply_snippet_days = excluded.reply_snippet_days, reply_check_minutes = excluded.reply_check_minutes,
+       daily_discovery_limit = excluded.daily_discovery_limit, search_any_site = excluded.search_any_site, cv_guidance = excluded.cv_guidance, country_priority = excluded.country_priority, employment_priority = excluded.employment_priority, bcc_self = excluded.bcc_self, research_min_score = excluded.research_min_score, research_scope = excluded.research_scope, batch_size = excluded.batch_size, salary_period = excluded.salary_period, consent_default = excluded.consent_default, priority_mode = excluded.priority_mode, cover_letters = excluded.cover_letters, cookie_banners = excluded.cookie_banners, default_skill_level = excluded.default_skill_level, question_mode = excluded.question_mode, question_overrides = excluded.question_overrides, cover_guidance = excluded.cover_guidance, auto_mark_replied = excluded.auto_mark_replied, follow_up_days = excluded.follow_up_days, max_follow_ups = excluded.max_follow_ups, no_response_days = excluded.no_response_days, reply_snippet_days = excluded.reply_snippet_days, reply_check_minutes = excluded.reply_check_minutes,
        updated_at = datetime('now')`,
   ).run(
     JSON.stringify(p.roles),
-    JSON.stringify(p.seniority),
+    JSON.stringify(seniority),
     JSON.stringify(p.locations),
     p.remotePolicy,
     JSON.stringify(p.industries),
@@ -256,6 +285,9 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
     p.coverLetters ?? "auto",
     p.coverGuidance?.trim() || null,
     p.cookieBanners ?? "accept",
+    p.defaultSkillLevel ?? null,
+    p.questionMode ?? "batch",
+    JSON.stringify(questionOverrides),
     p.autoMarkReplied === false ? 0 : 1,
     p.followUpDays ?? 7,
     p.maxFollowUps ?? 1,
@@ -263,6 +295,7 @@ export function setPreferences(db: DB, p: Preferences, actor: Actor): void {
     p.replySnippetDays ?? 90,
     p.replyCheckMinutes ?? 0,
   );
+  db.prepare("UPDATE preferences SET writing_style = ? WHERE id = 1").run(p.writingStyle?.trim() || null);
   logEvent(db, actor, "preferences_updated", null);
 }
 

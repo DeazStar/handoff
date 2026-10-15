@@ -97,7 +97,7 @@ describe("finding the people", () => {
 describe("addresses built from the company's pattern", () => {
   const draftBlocks = () => [
     { text: "Dear Jane,", factIds: [], kind: "boilerplate" },
-    { text: "I built a payments API serving 50000 users.", factIds: [fact] },
+    { text: "I'm applying for the Backend Engineer role at Acme. I built a payments API serving 50000 users. My CV and cover letter are attached.", factIds: [fact] },
     { text: "Best regards,", factIds: [], kind: "boilerplate" },
   ];
 
@@ -105,7 +105,7 @@ describe("addresses built from the company's pattern", () => {
     const agent = createAgentApi(db);
     agent.recordVerification(jobId, { result: "live" }); agent.setMatch(jobId, 8, "fits"); agent.setRoute(jobId, "email");
     saveDocument(db, { jobId, kind: "cv", path: "documents/cv.pdf", blocks: [{ text: "Built a payments API serving 50000 users", factIds: [fact] }] }, "agent");
-    saveDocument(db, { jobId, kind: "cover", path: "documents/job-1-cover-v1.pdf", blocks: [{ text: "Dear Hiring Team,", factIds: [], kind: "boilerplate" }, { text: "I built a payments API serving 50000 users.", factIds: [fact] }] }, "agent");
+    saveDocument(db, { jobId, kind: "cover", path: "documents/job-1-cover-v1.pdf", blocks: [{ text: "Dear Hiring Team,", factIds: [], kind: "boilerplate" }, { text: "I'm applying for the Backend Engineer role at Acme. I built a payments API serving 50000 users. My CV and cover letter are attached.", factIds: [fact] }] }, "agent");
     agent.transitionJob(jobId, "materials_ready");
   }
 

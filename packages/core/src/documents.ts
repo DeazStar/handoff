@@ -14,6 +14,8 @@ export interface Block {
   text: string;
   factIds: number[];
   kind?: "claim" | "boilerplate";
+  /** Number tokens the server itself derived (such as years of experience from the user's dated roles), so they need no fact. */
+  allowNumbers?: string[];
 }
 
 export interface NewDocument {
@@ -56,7 +58,7 @@ export function checkProvenance(db: DB, blocks: Block[], jobId: number | null = 
 
   blocks.forEach((b, i) => {
     const label = `Block ${i + 1} ("${b.text.slice(0, 40)}")`;
-    const numbers = numberTokens(b.text);
+    const numbers = numberTokens(b.text).filter((n) => !(b.allowNumbers ?? []).includes(n));
 
     if ((b.kind ?? "claim") === "boilerplate") {
       if (b.factIds.length > 0) problems.push(`${label}: boilerplate must not cite facts`);

@@ -275,6 +275,32 @@ const sameSite = (a: string, b: string) => a === b || a.endsWith(`.${b}`) || b.e
 
 export const MAX_BROWSER_QUOTE = 400;
 
+const FREE_MAIL = new Set(["gmail.com", "googlemail.com", "yahoo.com", "outlook.com", "hotmail.com", "live.com", "icloud.com", "me.com", "aol.com", "proton.me", "protonmail.com", "gmx.com", "yandex.com", "mail.com", "zoho.com"]);
+
+/** Same posting page: the host and path match, ignoring the query, the #fragment, "www." and a trailing slash. */
+export function samePostingPage(a: string, b: string): boolean {
+  const norm = (u: string) => {
+    try {
+      const x = new URL(u);
+      return `${x.hostname.replace(/^www\./, "").toLowerCase()}${x.pathname.replace(/\/+$/, "")}`.toLowerCase();
+    } catch {
+      return "";
+    }
+  };
+  return norm(a) !== "" && norm(a) === norm(b);
+}
+
+/**
+ * Pages the server may trust as the company's own without being on its domain. Each rule is one entry here, so a new
+ * rule is one more line. A rule only relaxes WHERE the page may be; the quote, the free-mail ban and the mail check still apply,
+ * and the user still sees the quote before sending.
+ *  - posting_page: the page is the job's own posting (the link this job was found at), which the company published, even when it
+ *    lives on a third-party host such as Notion, Greenhouse or Workable. The address may then be at another domain of the company.
+ */
+export const TRUSTED_PAGE_RULES: { id: string; applies: (i: { sourceUrl: string; postingUrl?: string }) => boolean }[] = [
+  { id: "posting_page", applies: (i) => Boolean(i.postingUrl) && samePostingPage(i.sourceUrl, i.postingUrl!) },
+];
+
 /**
  * For a page the server could not open (the site blocks automated requests) but the agent read in a real browser. The server cannot
  * look at the page itself, so it accepts the agent's quote only if every check it CAN make passes: the quote is a real line of text
@@ -282,9 +308,9 @@ export const MAX_BROWSER_QUOTE = 400;
  * address), and its domain takes mail. The quote is kept and shown to the user, who confirms by sending.
  */
 export async function verifyContactFromBrowser(
-  input: { email: string; sourceUrl: string; quote: string; companyDomain?: string },
+  input: { email: string; sourceUrl: string; quote: string; companyDomain?: string; postingUrl?: string },
   deps: Pick<VerifyDeps, "hasMail"> = defaultVerifyDeps,
-): Promise<VerifyResult> {
+): Promise<VerifyResult & { rule?: string }> {
   const email = input.email.trim().toLowerCase();
   if (!EMAIL.test(email) || email.length > 254) return { ok: false, code: "invalid", reason: `"${input.email}" is not a valid email address` };
   const quote = input.quote.replace(/\s+/g, " ").trim();
@@ -294,6 +320,16 @@ export async function verifyContactFromBrowser(
   if (!pageHost) return { ok: false, code: "invalid", reason: "The page must be a web link" };
   const emailDomain = email.split("@")[1]!;
   const company = input.companyDomain?.toLowerCase().replace(/^www\./, "");
+  const rule = TRUSTED_PAGE_RULES.find((r) => r.applies(input));
+  if (rule) {
+    if (FREE_MAIL.has(emailDomain)) return { ok: false, code: "not_on_page", reason: `${email} is a free-mail address (${emailDomain}). Use an address at the company's own domain` };
+    try {
+      if (!(await deps.hasMail(emailDomain))) return { ok: false, code: "no_mail", reason: `The domain ${emailDomain} has no mail records, so mail to ${email} would bounce` };
+    } catch (e) {
+      return { ok: false, code: "no_mail", reason: (e as Error).message };
+    }
+    return { ok: true, email, rule: rule.id };
+  }
   if (company && !sameSite(pageHost, company)) return { ok: false, code: "not_on_page", reason: `${pageHost} is not the company's own site (${company}). Cite a page on the company's site` };
   if (!sameSite(emailDomain, pageHost) && !(company && sameSite(emailDomain, company))) {
     return { ok: false, code: "not_on_page", reason: `${email} is not at the company's own domain (${company ?? pageHost}), so a browser reading is not enough. Find an address at the company's domain` };

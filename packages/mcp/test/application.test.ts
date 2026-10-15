@@ -147,3 +147,23 @@ describe("prepare_application", () => {
     expect(db.prepare("SELECT answers FROM applications WHERE job_id = ?").get(jobId)).toMatchObject({ answers: expect.stringContaining('"check":"differs"') });
   });
 });
+
+describe("refilling a lost form through the tools", () => {
+  it("reads the stored answers, and records them again", async () => {
+    const first = await call("prepare_application", { jobId, formUrl: "https://acme.example/apply/1", answers: answers(), leftBlank: [] });
+    expect(first.error).toBe(false);
+    const stored = await call("get_prepared_application", { jobId });
+    expect(stored.error).toBe(false);
+    expect(stored.data.formUrl).toBe("https://acme.example/apply/1");
+    expect(stored.data.answers.map((a: any) => a.question)).toEqual(answers().map((a: any) => a.question));
+    const again = await call("prepare_application", { jobId, formUrl: stored.data.formUrl, answers: stored.data.answers.map(({ check, checkNote, ...a }: any) => a), leftBlank: stored.data.leftBlank });
+    expect(again.error).toBe(false);
+    expect((await call("list_open_actions")).data.filter((a: any) => a.kind === "confirm_submit")).toHaveLength(1);
+  });
+  it("says so when nothing is waiting, and the agent has no way to discard a prepared form", async () => {
+    expect((await call("get_prepared_application", { jobId })).text).toMatch(/no prepared form waiting/);
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    expect(names.filter((n) => /discard|submitted/.test(n))).toEqual([]);
+    expect(client.getInstructions() ?? "").toMatch(/Never discard a prepared form yourself/);
+  });
+});

@@ -7,11 +7,15 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <header>
-    <strong>jobhunt</strong>
-    <nav id="nav"></nav>
-  </header>
-  <main id="view"></main>
+  <div id="progress" aria-hidden="true"></div>
+  <div class="app">
+    <aside class="side">
+      <div class="brand">jobhunt</div>
+      <nav id="nav" aria-label="Main"></nav>
+    </aside>
+    <main id="view" aria-live="polite"></main>
+  </div>
+  <div id="toasts" role="region" aria-label="Messages"></div>
   <script src="/app.js"></script>
 </body>
 </html>

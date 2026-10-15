@@ -75,3 +75,23 @@ describe("scout tools", () => {
     expect((await call("set_company_verdict", { companyId: id, verdict: "unreviewed", reason: "x".repeat(20) })).error).toBe(true);
   });
 });
+
+describe("when the ready list is short", () => {
+  it("lets Claude have the server find career pages, then lists the companies it found", async () => {
+    const fresh = openDb(":memory:");
+    importDirectory(fresh, [
+      { name: "Ccc", website: "https://ccc.io", source: "yc", sourceRef: "ccc" },
+      { name: "Ddd", website: "https://ddd.io", source: "yc", sourceRef: "ddd" },
+    ], "system");
+    const many = Array.from({ length: 12 }, (_, i) => `<a href="/p${i}">p${i}</a>`).join("");
+    const deps = { hasMail: async () => true, fetchPage: async (u: string) => `<html><body>${many}<a href="/careers">Careers</a></body></html>` };
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await createMcpServer(fresh, { dataDir: mkdtempSync(join(tmpdir(), "jobhunt-scout2-")), deps: deps as never }).connect(a);
+    const c = new Client({ name: "test", version: "0" });
+    await c.connect(b);
+    const run = async (name: string, args: object = {}) => JSON.parse(((await c.callTool({ name, arguments: args })) as { content: { text: string }[] }).content[0]!.text);
+    expect(await run("list_scout_companies", { limit: 5 })).toEqual([]); // nothing has a career page yet
+    expect(await run("find_career_pages", { limit: 40 })).toMatchObject({ checked: 2, found: 2, remaining: 0 });
+    expect((await run("list_scout_companies", { limit: 5 })).map((x: any) => x.name).sort()).toEqual(["Ccc", "Ddd"]);
+  });
+});

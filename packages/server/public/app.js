@@ -23,36 +23,130 @@ function h(tag, attrs, ...children) {
 
 const safeHref = (u) => (/^https?:\/\//i.test(u) ? u : undefined);
 
-async function api(method, path, body) {
-  const res = await fetch(path, {
-    method,
-    // The server accepts only JSON on anything that changes data, so a POST with nothing to say still sends {}.
-    headers: method === "GET" && body === undefined ? {} : { "content-type": "application/json" },
-    body: method === "GET" && body === undefined ? undefined : JSON.stringify(body ?? {}),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
-  return data;
-}
-
-function showNote(text) {
-  const box = h("div", { class: "card" }, text);
-  view.prepend(box);
-  setTimeout(() => box.remove(), 12000);
-}
-
-function showError(e) {
-  const box = h("div", { class: "error" }, String(e.message || e));
-  view.prepend(box);
-  setTimeout(() => box.remove(), 6000);
-}
-
-const act = (fn) => async () => {
-  try { await fn(); await render(); } catch (e) { showError(e); }
+// A thin bar at the top of the screen shows while anything is loading or saving. It waits a moment so quick calls do not flash it.
+const bar = document.getElementById("progress");
+let inflight = 0;
+let barTimer = null;
+const busyStart = () => {
+  inflight++;
+  if (inflight === 1) barTimer = setTimeout(() => bar.classList.add("on"), 120);
 };
+const busyEnd = () => {
+  inflight = Math.max(0, inflight - 1);
+  if (inflight === 0) { clearTimeout(barTimer); barTimer = null; bar.classList.remove("on"); }
+};
+
+async function api(method, path, body) {
+  busyStart();
+  try {
+    const res = await fetch(path, {
+      method,
+      // The server accepts only JSON on anything that changes data, so a POST with nothing to say still sends {}.
+      headers: method === "GET" && body === undefined ? {} : { "content-type": "application/json" },
+      body: method === "GET" && body === undefined ? undefined : JSON.stringify(body ?? {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    return data;
+  } finally {
+    busyEnd();
+  }
+}
+
+// Messages sit in the corner of the screen, so they are seen on every page and survive moving between pages.
+// A success goes away by itself; an error stays until it is dismissed, and can be copied.
+const toastBox = document.getElementById("toasts");
+let toastCount = 0;
+function toast(kind, text, ms) {
+  toastCount++;
+  const message = String(text);
+  const el = h("div", { class: `toast ${kind}`, role: kind === "error" ? "alert" : "status" },
+    h("span", { class: "icon", "aria-hidden": "true" }, kind === "ok" ? "✓" : kind === "error" ? "!" : "i"),
+    h("div", { class: "msg" }, message),
+    kind === "error" ? h("button", { onclick: () => { navigator.clipboard.writeText(message).then(() => toast("info", "Copied", 1500), () => {}); } }, "Copy") : null,
+    h("button", { class: "close", "aria-label": "Dismiss", onclick: () => el.remove() }, "×"));
+  toastBox.append(el);
+  while (toastBox.children.length > 4) toastBox.firstChild.remove();
+  const life = kind === "error" ? 0 : ms ?? Math.min(12000, 3500 + message.length * 40);
+  if (life) setTimeout(() => el.remove(), life);
+  return el;
+}
+const showNote = (text) => toast("ok", text);
+const showError = (e) => toast("error", String(e && e.message ? e.message : e));
+
+/**
+ * The handler for a button that changes something: the button shows a spinner and cannot be pressed twice, the page refreshes
+ * afterwards, and the user always gets a message ("Done" unless the action said something more useful itself).
+ */
+const act = (fn, okText) => async (ev) => {
+  const btn = ev && ev.currentTarget && ev.currentTarget.tagName === "BUTTON" ? ev.currentTarget : null;
+  if (btn && btn.disabled) return;
+  if (btn) { btn.classList.add("busy"); btn.disabled = true; }
+  const before = toastCount;
+  try {
+    await fn();
+    await render();
+    if (toastCount === before) toast("ok", okText || "Done");
+  } catch (e) {
+    showError(e);
+  } finally {
+    if (btn) { btn.classList.remove("busy"); btn.disabled = false; }
+  }
+};
+
+/** A button for something that cannot be undone: the first click asks, the second does it. */
+function confirmButton(text, confirmText, run, cls = "danger") {
+  let armed = false;
+  let timer;
+  const btn = h("button", { class: cls, onclick: async (ev) => {
+    if (!armed) {
+      armed = true;
+      btn.textContent = confirmText;
+      timer = setTimeout(() => { armed = false; btn.textContent = text; }, 6000);
+      return;
+    }
+    clearTimeout(timer);
+    armed = false;
+    btn.textContent = text;
+    await act(run)(ev);
+  } }, text);
+  return btn;
+}
+
+/** One tab bar for every page: the label, a count, and the one that is open. `items` are { id, text, count, cls }. */
+function tabBar(items, active, choose) {
+  return h("div", { class: "tabs", role: "tablist" }, items.map((t) =>
+    h("button", { class: `tab ${t.cls || ""}${t.id === active ? " on" : ""}`, role: "tab", "aria-selected": t.id === active ? "true" : "false", onclick: () => choose(t.id) },
+      t.text, h("span", { class: `count${t.count ? "" : " zero"}` }, String(t.count ?? 0)))));
+}
+
+/** A page's title with a short line under it and, on the right, the actions that belong to the whole page. */
+function pageHead(title, sub, ...actions) {
+  return h("div", { class: "page-head" }, h("div", {}, h("h1", {}, title), sub ? h("div", { class: "muted" }, sub) : null), actions.length ? h("div", { class: "row" }, actions) : null);
+}
 
 const label = (s) => s.replaceAll("_", " ");
 
+
+/** What the agent may tick on a form in one run. The same choice wherever a command is copied. */
+function consentSelect() {
+  const sel = h("select", { title: "What the agent may tick on the form for this run only. It never ticks optional boxes such as marketing." },
+    [["none", "tick no consent boxes"], ["privacy", "tick the privacy consent only"], ["required", "tick all boxes needed to submit"]].map(([v, t]) => h("option", { value: v }, t)));
+  sel.value = (currentPrefs && currentPrefs.consentDefault) || "none";
+  return sel;
+}
+const consentWord = (sel) => (sel.value === "none" ? "" : sel.value === "privacy" ? " consent" : " consent all");
+
+/** The filled form lives only in the browser tab. If that was closed, this copies the command that puts the saved answers back. */
+function refillBox(jobId) {
+  const consent = consentSelect();
+  return h("div", { class: "row" },
+    h("button", { onclick: async () => {
+      const cmd = `/apply ${jobId} refill${consentWord(consent)}`;
+      try { await navigator.clipboard.writeText(cmd); showNote(`Copied ${cmd}. Paste it into your Claude session. It opens the form and puts your saved answers back, without writing anything again.`); }
+      catch { showNote(`Copy this and paste it into your Claude session: ${cmd}`); }
+    } }, "Browser closed? Refill the form"), consent);
+}
 
 /** One click gets the right command onto the clipboard. A web page cannot start a Claude session itself. */
 function goButton(job) {
@@ -61,11 +155,9 @@ function goButton(job) {
     ? "tailor the CV, then draft the email or fill the form"
     : job.route === "email" ? "draft the email" : job.route === "form" ? "fill the form" : "nothing more to do";
   const forForm = job.route !== "email";
-  const consent = h("select", { title: "What the agent may tick on the form for this run only. It never ticks optional boxes such as marketing." },
-    [["none", "tick no consent boxes"], ["privacy", "tick the privacy consent only"], ["required", "tick all boxes needed to submit"]].map(([v, t]) => h("option", { value: v }, t)));
-  consent.value = (currentPrefs && currentPrefs.consentDefault) || "none";
+  const consent = consentSelect();
   const btn = h("button", { class: "primary", title: "Copies the command to paste into Claude", onclick: async () => {
-    const word = !forForm || consent.value === "none" ? "" : consent.value === "privacy" ? " consent" : " consent all";
+    const word = forForm ? consentWord(consent) : "";
     const cmd = `/go ${job.id}${word}`;
     try {
       await navigator.clipboard.writeText(cmd);
@@ -79,11 +171,45 @@ function goButton(job) {
 
 // ---------- views ----------
 
+const QUEUE_TABS = [
+  { id: "waiting", text: "Waiting for you", empty: "Nothing is waiting for your check. Forms to submit and emails to send show here." },
+  { id: "questions", text: "Questions", empty: "No questions. When Claude needs an answer only you can give, it shows here." },
+  { id: "gaps", text: "Gaps", empty: "No gaps. Skills a job asks for that your facts do not cover show here." },
+  { id: "signin", text: "Sign-in", empty: "No accounts to make and nothing to verify." },
+  { id: "other", text: "Other", empty: "Nothing else is waiting." },
+];
+const queueBucket = (a) =>
+  a.kind === "confirm_submit" || a.kind === "approve_email" ? "waiting"
+  : a.kind === "sensitive_question" ? "questions"
+  : a.kind === "gap" ? "gaps"
+  : a.kind === "signup_needed" ? "signin" : "other";
+
 async function queueView() {
   const items = await api("GET", "/api/actions");
-  view.replaceChildren(h("h1", {}, `Needs you (${items.length})`));
-  if (items.length === 0) view.append(h("div", { class: "empty" }, "Nothing waiting. The agent has no open questions."));
-  for (const a of items) view.append(a.kind === "gap" ? gapCard(a) : actionCard(a));
+  const by = (id) => items.filter((a) => queueBucket(a) === id);
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  // It opens on the first tab that has something, unless the user chose one.
+  const active = QUEUE_TABS.some((t) => t.id === params.get("t")) ? params.get("t") : (QUEUE_TABS.find((t) => by(t.id).length) || QUEUE_TABS[0]).id;
+  view.replaceChildren(pageHead(`Needs you (${items.length})`, items.length ? "Everything Claude is waiting on you for, sorted by what it is." : "Nothing is waiting. Claude has no open questions."));
+  if (!items.length) { view.append(h("div", { class: "empty" }, "All clear.")); return 0; }
+  view.append(tabBar(QUEUE_TABS.map((t) => ({ id: t.id, text: t.text, count: by(t.id).length })), active, (id) => { location.hash = `#/?t=${id}`; }));
+  const list = by(active);
+  if (!list.length) { view.append(h("div", { class: "empty" }, QUEUE_TABS.find((t) => t.id === active).empty)); return items.length; }
+
+  if (active === "questions") {
+    const proposals = list.filter((a) => a.payload && a.payload.proposal);
+    if (proposals.length > 1) {
+      view.append(h("div", { class: "card" }, h("div", { class: "row" },
+        h("strong", { class: "grow" }, `${proposals.length} things you told Claude are ready to be saved`),
+        h("button", { class: "primary", onclick: act(async () => { for (const a of proposals) await api("POST", `/api/proposals/${a.id}/accept`, { use: "polished" }); showNote("Saved."); }) }, `Save all ${proposals.length} as worded`)),
+        h("div", { class: "hint" }, "Each card shows what you said and how it is worded. Open a card to use your exact words instead.")));
+    }
+    list.forEach((a) => view.append(actionCard(a)));
+  } else if (active === "gaps") {
+    await gapList(list);
+  } else {
+    list.forEach((a) => view.append(actionCard(a)));
+  }
   return items.length;
 }
 
@@ -91,15 +217,105 @@ function jobLink(a) {
   return a.jobId ? h("a", { href: `#/jobs/${a.jobId}` }, a.jobTitle || `Job ${a.jobId}`) : h("span", { class: "muted" }, "no job");
 }
 
+// Something the user told Claude in chat. It was already used; this keeps it for next time, after one click.
+function rememberCard(a) {
+  const p = a.payload.proposal;
+  const text = h("textarea", {});
+  text.value = p.polished;
+  const accept = (body) => async () => {
+    try { await api("POST", `/api/proposals/${a.id}/accept`, body); showNote(p.type === "answer" ? "Saved under Standard answers." : "Saved as a fact."); await render(); } catch (e) { showError(e); }
+  };
+  return h("div", { class: "card" },
+    h("div", { class: "row" }, h("span", { class: "badge" }, p.type === "answer" ? "keep this answer?" : "keep this fact?"), a.jobId ? jobLink(a) : null),
+    p.type === "answer" ? h("p", {}, h("strong", {}, p.label)) : h("div", { class: "muted" }, `As a ${p.kind} fact${p.entryId ? ` under role ${p.entryId}` : ""}`),
+    h("div", { class: "muted" }, "You said:"), h("div", { class: "pre" }, p.original),
+    h("div", { class: "muted mt-sm" }, "Saved as (you can edit it):"), text,
+    h("div", { class: "row mt" },
+      h("button", { class: "primary", onclick: () => accept({ use: "text", text: text.value })() }, "Save"),
+      h("button", { onclick: accept({ use: "original" }) }, "Save my exact words"),
+      h("button", { onclick: act(() => api("POST", `/api/actions/${a.id}/resolve`, { status: "dismissed" })) }, "Not this")));
+}
+
+// A question only the user can answer. The answer is saved once as a standard answer, so it is never asked again.
+function questionCard(a) {
+  const q = a.payload;
+  const save = async (answer) => {
+    if (!String(answer).trim()) { showError(new Error("Choose or write an answer first")); return; }
+    try {
+      await api("PUT", "/api/standard-answers", { label: q.question, answer: String(answer) });
+      await api("POST", `/api/actions/${a.id}/resolve`, { status: "done" });
+      showNote("Saved. Claude will use it from now on. Run the command again to carry on.");
+      await render();
+    } catch (e) { showError(e); }
+  };
+  const free = h("input", { placeholder: "Your answer", class: "grow grow-min" });
+  return h("div", { class: "card" },
+    h("div", { class: "row" }, h("span", { class: "badge" }, "a question for you"), a.jobId ? jobLink(a) : null, q.site ? h("span", { class: "muted" }, q.site) : null),
+    h("p", {}, q.question),
+    q.options && q.options.length
+      ? h("div", { class: "row" }, q.options.map((o) => h("button", { class: "primary", onclick: () => save(o) }, o)))
+      : h("div", { class: "row" }, free, h("button", { class: "primary", onclick: () => save(free.value) }, "Save my answer")),
+    h("div", { class: "muted" }, "Your answer is saved once under Standard answers, and used every time a site asks this."),
+    h("div", { class: "row mt" }, h("button", { onclick: act(() => api("POST", `/api/actions/${a.id}/resolve`, { status: "dismissed" })) }, "Dismiss")));
+}
+
+// Claude cannot be started from a button, so this copies the command for the user's Claude session, like the Apply button.
+function profileCommandBox(jobId) {
+  const save = h("input", { type: "checkbox" });
+  save.checked = true;
+  const button = h("button", { class: "primary", onclick: async () => {
+    const cmd = `/profile${jobId ? " " + jobId : ""}${save.checked ? " save" : ""}`;
+    try { await navigator.clipboard.writeText(cmd); showNote(`Copied ${cmd}. Paste it into your Claude session and press Enter. It goes through every tab of the profile.`); }
+    catch { showNote(`Copy this and paste it into your Claude session: ${cmd}`); }
+  } }, "Fill in the profile");
+  return h("div", { class: "row mt" }, button, h("label", {}, save, " also save each section"));
+}
+
+function profileCard(a, p) {
+  return h("div", { class: "card" },
+    h("div", { class: "row" }, h("span", { class: "badge" }, "fill in the profile"), a.jobId ? jobLink(a) : null, h("strong", {}, p.site),
+      safeHref(p.applyUrl) ? h("a", { href: safeHref(p.applyUrl), target: "_blank", rel: "noopener noreferrer" }, "the page") : null),
+    h("div", { class: "muted" }, p.note || "This site has a profile to fill in. Claude fills it from your profile, CV and facts, tab by tab, and leaves the email and password boxes."),
+    profileCommandBox(a.jobId),
+    h("div", { class: "row mt" },
+      h("button", { class: "primary", onclick: act(async () => { await api("POST", "/api/site-profiles", { site: p.site, complete: true }); showNote(`Marked the profile on ${p.site} as complete. Claude will not ask for it again.`); }) }, "It is filled in"),
+      h("button", { onclick: act(() => api("POST", `/api/actions/${a.id}/resolve`, { status: "dismissed" })) }, "Dismiss")));
+}
+
+// A site sent a mail to check the address. The link is untrusted: the page shows where it goes, and only the user opens it.
+function verifyCard(a, p) {
+  const link = /^https:\/\//i.test(p.link || "") ? p.link : undefined;
+  return h("div", { class: "card" },
+    h("div", { class: "row" }, h("span", { class: "badge" }, "verify your email"), a.jobId ? jobLink(a) : null, h("strong", {}, p.site)),
+    h("div", { class: "muted" }, `The site sent: "${p.subject}" from ${p.from}.`),
+    link ? h("div", { class: p.linkRelated ? "muted" : "warn" }, p.linkRelated
+      ? `The link goes to ${p.linkHost}, which is part of ${p.site}.`
+      : `Careful: the link goes to ${p.linkHost}, which is not ${p.site}. Mail services often route links through their own address, but check the sender and the address before you click.`)
+      : h("div", { class: "muted" }, "I could not pick out the link. Open the email in your mailbox and click it there."),
+    h("div", { class: "row mt" },
+      link ? h("a", { href: link, target: "_blank", rel: "noopener noreferrer" }, "Open the link") : null,
+      h("button", { class: "primary", onclick: act(() => api("POST", `/api/verifications/${p.verificationId}/used`, {})) }, "I verified it"),
+      h("button", { onclick: act(() => api("POST", `/api/verifications/${p.verificationId}/ignore`, {})) }, "This is not it")));
+}
+
 // The password is made and copied by the server. It is never shown here and never sent to Claude.
+/** The vault locks whenever the dashboard restarts. When that is why something failed, take the user to the page that unlocks it. */
+function sendToVault(e) {
+  if (/vault/i.test(String((e && e.message) || e)) && /unlock|locked/i.test(String((e && e.message) || e))) setTimeout(() => { location.hash = "#/vault"; }, 1200);
+}
+
 function signupCard(a) {
   const p = a.payload;
   const card = h("div", { class: "card" });
+  if (p.mode === "verify") return verifyCard(a, p);
+  if (p.mode === "profile") return profileCard(a, p);
   const draw = async () => {
     const [accounts, profile] = await Promise.all([api("GET", "/api/accounts"), api("GET", "/api/profile")]);
-    const mine = accounts.find((x) => x.site === p.site);
+    // The account the user already has for this site: the one they confirmed, else the oldest (the list is newest first).
+    const matches = accounts.filter((x) => x.site === p.site);
+    const mine = matches.find((x) => x.confirmedAt) || matches[matches.length - 1];
     const login = p.mode === "login" || (mine && mine.confirmedAt);
-    const copy = (id, what) => h("button", { onclick: async () => { try { const r = await api("POST", `/api/accounts/${id}/copy`, { what }); showNote(what === "password" ? `Password copied. It leaves the clipboard in ${r.clearsInSeconds} seconds.` : "Copied."); } catch (e) { showError(e); } } }, what === "password" ? "Copy password" : "Copy email");
+    const copy = (id, what) => h("button", { onclick: async () => { try { const r = await api("POST", `/api/accounts/${id}/copy`, { what }); showNote(what === "password" ? `Password copied. It leaves the clipboard in ${r.clearsInSeconds} seconds.` : "Copied."); } catch (e) { showError(e); sendToVault(e); } } }, what === "password" ? "Copy password" : (p.username ? "Copy username" : "Copy email"));
     const rules = p.passwordRules ? [p.passwordRules.minLength && `at least ${p.passwordRules.minLength} characters`, p.passwordRules.maxLength && `at most ${p.passwordRules.maxLength}`, p.passwordRules.symbols === false && "no special characters"].filter(Boolean).join(", ") : "";
     const rows = [
       h("div", { class: "row" }, h("span", { class: "badge" }, login ? "log in" : "create an account"), a.jobId ? jobLink(a) : null, h("strong", {}, p.site),
@@ -109,14 +325,16 @@ function signupCard(a) {
       rules ? h("div", { class: "muted" }, `Password rules on that page: ${rules}`) : null,
     ];
     if (!mine) {
-      rows.push(h("div", { class: "row", style: "margin-top:8px" },
-        h("button", { class: "primary", onclick: async () => { try { await api("POST", "/api/accounts/start", { site: p.site, pageUrl: p.applyUrl, passwordRules: p.passwordRules, jobId: a.jobId || undefined }); await draw(); } catch (e) { showError(e); } } }, "Make a password"),
-        h("span", { class: "muted" }, `A random 20-character password is saved in your vault for ${p.site}. The account email is ${profile && profile.email ? profile.email : "(set your email in the profile)"}.`)));
+      rows.push(h("div", { class: "row mt" },
+        h("button", { class: "primary", onclick: quiet(async () => {
+          try { await api("POST", "/api/accounts/start", { site: p.site, pageUrl: p.applyUrl, passwordRules: p.passwordRules, jobId: a.jobId || undefined, username: p.username || undefined }); await draw(); } catch (e) { sendToVault(e); throw e; }
+        }) }, "Make a password"),
+        h("span", { class: "muted" }, `A random 20-character password is saved in your vault for ${p.site}. The account ${p.username ? "username is " + p.username : "email is " + (profile && profile.email ? profile.email : "(set your email in the profile)")}.`)));
     } else {
-      rows.push(h("div", { class: "row", style: "margin-top:8px" }, copy(mine.id, "username"), copy(mine.id, "password"),
+      rows.push(h("div", { class: "row mt" }, copy(mine.id, "username"), copy(mine.id, "password"),
         h("span", { class: "muted" }, "Paste each into the form yourself, tick the terms, solve any CAPTCHA, and press the site's own button.")));
-      rows.push(h("div", { class: "row", style: "margin-top:8px" },
-        h("button", { class: "primary", onclick: act(async () => { if (login) await api("POST", `/api/actions/${a.id}/resolve`, { status: "done" }); else await api("POST", `/api/accounts/${mine.id}/confirm`, {}); }) }, login ? "I am logged in" : "I created the account"),
+      rows.push(h("div", { class: "row mt" },
+        h("button", { class: "primary", onclick: act(async () => { if (login) await api("POST", `/api/actions/${a.id}/resolve`, { status: "done" }); else { await api("POST", `/api/accounts/${mine.id}/confirm`, {}); showNote("Recorded. If the site has a profile to fill in, use Fill in the profile on the Accounts page."); } }) }, login ? "I am logged in" : "I created the account"),
         h("button", { onclick: act(() => api("POST", `/api/actions/${a.id}/resolve`, { status: "dismissed" })) }, "Dismiss")));
     }
     if (!mine) rows.push(h("div", { class: "row" }, h("button", { onclick: act(() => api("POST", `/api/actions/${a.id}/resolve`, { status: "dismissed" })) }, "Dismiss")));
@@ -132,15 +350,18 @@ function actionCard(a) {
     return h("div", { class: "card" },
       h("div", { class: "row" }, h("span", { class: "badge" }, "check and submit"), jobLink(a)),
       h("div", { class: "muted" }, `${a.payload.answers || 0} answers entered, ${a.payload.leftBlank || 0} left for you`),
-      h("div", { class: "row", style: "margin-top:8px" }, h("a", { href: `#/applications/${a.jobId}` }, "Review the application")));
+      h("div", { class: "row mt" }, h("a", { href: `#/applications/${a.jobId}` }, "Review the application")),
+      h("div", { class: "mt" }, refillBox(a.jobId)));
   }
   if (a.kind === "approve_email" && a.payload && a.payload.emailId) {
     return h("div", { class: "card" },
       h("div", { class: "row" }, h("span", { class: "badge" }, "approve email"), jobLink(a)),
       h("div", { class: "muted" }, `To: ${a.payload.to}`),
       h("div", { class: "muted" }, `Subject: ${a.payload.subject}`),
-      h("div", { class: "row", style: "margin-top:8px" }, h("a", { href: `#/emails/${a.payload.emailId}` }, "Review the draft")));
+      h("div", { class: "row mt" }, h("a", { href: `#/emails/${a.payload.emailId}` }, "Review the draft")));
   }
+  if (a.kind === "sensitive_question" && a.payload && a.payload.proposal) return rememberCard(a);
+  if (a.kind === "sensitive_question" && a.payload && a.payload.question) return questionCard(a);
   if (a.kind === "signup_needed" && a.payload && a.payload.site) return signupCard(a);
   if (a.kind === "follow_up" && a.jobId) {
     const why = (a.payload || {}).reason;
@@ -149,56 +370,263 @@ function actionCard(a) {
       return h("div", { class: "card" },
         h("div", { class: "row" }, h("span", { class: "badge" }, "no reply yet"), jobLink(a)),
         h("div", { class: "muted" }, `Your email went out ${a.payload.days} days ago and nobody has answered.`),
-        h("div", { class: "row", style: "margin-top:8px" },
+        h("div", { class: "row mt" },
           h("button", { class: "primary", onclick: async () => { try { const r = await api("POST", `/api/jobs/${a.jobId}/follow-up`, {}); location.hash = `#/emails/${r.emailId}`; } catch (e) { showError(e); } } }, "Draft a follow-up"), dismiss));
     }
     if (why === "bounce") {
       return h("div", { class: "card" },
         h("div", { class: "row" }, h("span", { class: "badge gap" }, "email bounced"), jobLink(a)),
         h("div", { class: "muted" }, `Your email to ${a.payload.to} was not delivered. Find another contact for this company.`),
-        h("div", { class: "row", style: "margin-top:8px" }, h("a", { href: `#/jobs/${a.jobId}` }, "Open the job"), dismiss));
+        h("div", { class: "row mt" }, h("a", { href: `#/jobs/${a.jobId}` }, "Open the job"), dismiss));
     }
     return h("div", { class: "card" },
       h("div", { class: "row" }, h("span", { class: "badge" }, "check the portal"), jobLink(a)),
       h("div", { class: "muted" }, `You applied ${a.payload.days} days ago${a.payload.byHand ? " by hand" : " through a form"} and nothing has come back. Look at the company's site or your email for news.`),
-      h("div", { class: "row", style: "margin-top:8px" }, dismiss));
+      h("div", { class: "row mt" }, dismiss));
   }
   const details = Object.entries(a.payload || {}).map(([k, v]) =>
     h("div", { class: "muted" }, `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`));
   return h("div", { class: "card" },
     h("div", { class: "row" }, h("span", { class: "badge" }, label(a.kind)), jobLink(a)),
     details,
-    h("div", { class: "row", style: "margin-top:8px" },
+    h("div", { class: "row mt" },
       h("button", { class: "primary", onclick: act(() => api("POST", `/api/actions/${a.id}/resolve`, { status: "done" })) }, "Done"),
       h("button", { onclick: act(() => api("POST", `/api/actions/${a.id}/resolve`, { status: "dismissed" })) }, "Dismiss")));
 }
 
-function gapCard(a) {
+const GAP_KINDS = [["experience", "Something I did"], ["achievement", "A result I achieved"], ["skill", "A skill I have"]];
+
+/**
+ * A gap is something a job or form asks for that the facts do not cover. The card says exactly what, and has a box to say what the
+ * user really did. Nothing is saved until they click, and it is saved as their own fact (this job only, or for every job).
+ * `registry` lets the page save every filled box at once.
+ */
+/**
+ * A bullet with no number. The user types the number and what it counts; Claude rewords the bullet to carry it (grammar included);
+ * the user reads the result and saves it. The fact is updated for every job.
+ */
+function metricCard(a, g) {
+  const bullet = (g.suggestedFact && g.suggestedFact.text) || "";
+  const numbers = h("input", { class: "grow", placeholder: "The number and what it counts, e.g. 12,000 patients, about 40% faster, 6 services" });
+  const panel = h("div", {});
+  const clear = () => api("POST", "/api/gap-polish/clear", { actionId: a.id });
+  const save = (box) => quiet(async () => {
+    if (!/\d/.test(box.value)) throw new Error("The bullet needs the number in it");
+    await api("POST", `/api/actions/${a.id}/confirm-metric`, { text: box.value });
+    toast("ok", "Saved on the bullet for every job");
+    await render();
+  });
+  const addBtn = h("button", { class: "primary", onclick: quiet(async () => {
+    if (!/\d/.test(numbers.value)) throw new Error("Type the number first, for example 12,000 patients or 40% faster");
+    await api("POST", "/api/metric-polish", { actionId: a.id, numbers: numbers.value });
+    card.dataset.state = ""; show({ status: "requested", original: bullet, numbers: numbers.value }); pollDrafts();
+  }) }, "Let Claude word it");
+  const mine = h("button", { onclick: () => {
+    const box = h("textarea", { class: "tall-sm" }); box.value = bullet;
+    panel.replaceChildren(h("div", { class: "field" }, h("label", {}, "The bullet, written by you with the number in it"), box),
+      h("div", { class: "row mt" }, h("button", { class: "primary", onclick: save(box) }, "Save this bullet"), h("button", { onclick: () => show(null) }, "Cancel")));
+  } }, "Write the bullet myself");
+  /** Shows where the rewording stands: nothing yet, Claude working, or Claude's bullet to check and save. */
+  const show = (p, run) => {
+    addBtn.disabled = Boolean(p && p.status === "requested" && (!run || run.running));
+    if (!p) { panel.replaceChildren(); return; }
+    if (p.status === "requested") {
+      const r = run || { running: true };
+      const cancel = h("button", { onclick: quiet(() => clear().then(() => show(null)), "Request cancelled") }, "Cancel");
+      if (r.running) {
+        panel.replaceChildren(h("div", { class: "drafting", role: "status" }, h("span", { class: "spin" }),
+          h("div", { class: "grow" }, h("strong", {}, "Claude is wording this bullet with your number…"), h("div", { class: "hint" }, "Usually under a minute. Leave this page open: the bullet appears here by itself.")), cancel));
+      } else {
+        const why = r.error ? `Claude could not do this: ${r.error}` : r.available === false ? "Claude cannot be started from the dashboard here. Run /gaps in a Claude session, or write the bullet yourself." : "Claude finished without wording this one.";
+        panel.replaceChildren(h("div", { class: "drafting" }, h("div", { class: "grow" }, h("strong", {}, why)), cancel));
+      }
+      return;
+    }
+    const box = h("textarea", { class: "tall-sm" }); box.value = p.polished || "";
+    panel.replaceChildren(h("div", { class: "polished" },
+      h("div", { class: "hint" }, "Claude's bullet with your number. Edit it if you like, then save:"), box,
+      p.note ? h("div", { class: "hint" }, p.note) : null,
+      h("div", { class: "row mt" }, h("button", { class: "primary", onclick: save(box) }, "Save this bullet"), h("button", { onclick: quiet(() => clear().then(() => show(null))) }, "Try again"))));
+  };
+  const card = h("div", { class: "card warn-card", "data-gap": String(a.id) },
+    h("div", { class: "row" }, h("span", { class: "badge gap" }, "needs a number"), h("span", { class: "muted" }, g.detail ? g.detail.split(".")[0] : "")),
+    h("h2", { class: "mt-sm" }, "Add a real number to this bullet"),
+    h("div", { class: "hint" }, "Recruiters and ATS read a number as proof. Only a number you can stand behind in an interview. You type the number; Claude words the sentence."),
+    h("div", { class: "card inner" }, bullet),
+    h("div", { class: "field mt" }, h("label", {}, "Your number"), h("div", { class: "row" }, numbers, addBtn)),
+    panel,
+    h("div", { class: "row mt" }, mine,
+      confirmButton("I don't know a number", "Click again: stop asking about this bullet", () => api("POST", `/api/actions/${a.id}/resolve`, { status: "dismissed" }))));
+  card.applyDraft = (latest, run) => show((latest.payload || {}).polish, run);
+  show(g.polish);
+  if (g.polish && g.polish.status === "requested") pollDrafts();
+  return card;
+}
+
+function gapCard(a, ctx = {}, registry = []) {
   const g = a.payload || {};
-  const draft = g.suggestedFact || { kind: "skill", text: "" };
-  const text = h("textarea", {}, draft.text || "");
+  if (g.metric) return metricCard(a, g);
+  const draft = g.suggestedFact || {};
+  const text = h("textarea", { class: "tall-sm", placeholder: "Say it in your own words, with real numbers if you have them. Only what is true: it is saved as your fact, and Claude will never add to it." });
   text.value = draft.text || "";
-  const confirm = (scope) => act(() => api("POST", `/api/actions/${a.id}/confirm-gap`, {
-    scope, fact: { kind: draft.kind, text: text.value, dateRange: draft.dateRange },
-  }));
-  return h("div", { class: "card" },
-    h("div", { class: "row" }, h("span", { class: "badge gap" }, "gap"), g.importance && h("span", { class: "badge" }, label(g.importance)), jobLink(a)),
-    h("p", {}, `The job asks for: ${g.requirement || ""}`),
-    g.detail && h("div", { class: "muted" }, g.detail),
-    g.closestFactIds && g.closestFactIds.length > 0 && h("div", { class: "muted" }, `Closest facts: ${g.closestFactIds.join(", ")}`),
-    h("p", { class: "muted" }, "If this is true, state it below (edit the wording and any numbers). Nothing is saved until you click."),
-    text,
-    h("div", { class: "row", style: "margin-top:8px" },
-      h("button", { class: "primary", onclick: confirm("job") }, "True: use for this job only"),
-      h("button", { onclick: confirm("general") }, "True: add to my profile"),
-      h("button", { class: "danger", onclick: act(() => api("POST", `/api/actions/${a.id}/resolve`, { status: "dismissed" })) }, "Skip this gap")));
+  const kind = h("select", {}, GAP_KINDS.map(([v, t]) => h("option", { value: v }, t)));
+  kind.value = draft.kind || "experience";
+  const role = h("select", {}, h("option", { value: "" }, "Not tied to a role"), (ctx.entries || []).map((e) => h("option", { value: String(e.id) }, `${e.title}${e.organization ? `, ${e.organization}` : ""}`)));
+  const closest = (g.closestFactIds || []).map((id) => ctx.facts && ctx.facts.get(id)).filter(Boolean);
+  const save = async (scope) => {
+    if (!text.value.trim()) throw new Error("Write what you did first");
+    await api("POST", `/api/actions/${a.id}/confirm-gap`, { scope, fact: { kind: kind.value, text: text.value, dateRange: draft.dateRange, entryId: role.value ? Number(role.value) : undefined } });
+  };
+  const panel = h("div", {});
+  const polishPanel = h("div", {});
+  const polishBtn = h("button", { title: "Claude rewords what you wrote so it reads better, without adding anything", onclick: quiet(async () => {
+    if (!text.value.trim()) throw new Error("Write what you did first, then Claude can improve the wording");
+    await api("POST", "/api/gap-polish", { actionId: a.id, text: text.value });
+    card.dataset.state = ""; showPolish({ status: "requested", original: text.value }); pollDrafts();
+  }) }, "Improve my wording");
+  /** Shows the polish request: spinner while Claude works, then its wording to accept or decline. */
+  const showPolish = (p, run) => {
+    polishBtn.disabled = Boolean(p && p.status === "requested" && (!run || run.running));
+    if (!p) { polishPanel.replaceChildren(); return; }
+    const clear = () => api("POST", "/api/gap-polish/clear", { actionId: a.id });
+    if (p.status === "requested") {
+      const r = run || { running: true };
+      const keep = h("button", { onclick: quiet(() => clear().then(() => showPolish(null)), "Request cancelled") }, "Cancel");
+      if (r.running) {
+        polishPanel.replaceChildren(h("div", { class: "drafting", role: "status" }, h("span", { class: "spin" }),
+          h("div", { class: "grow" }, h("strong", {}, "Claude is improving your wording…"), h("div", { class: "hint" }, "Usually under a minute. Your text stays in the box meanwhile.")), keep));
+      } else {
+        const why = r.error ? `Claude could not do this: ${r.error}` : r.available === false ? "Claude cannot be started from the dashboard here. Run /gaps in a Claude session." : "Claude finished without improving this one.";
+        polishPanel.replaceChildren(h("div", { class: "drafting" }, h("div", { class: "grow" }, h("strong", {}, why)), keep));
+      }
+      return;
+    }
+    polishPanel.replaceChildren(h("div", { class: "polished" },
+      h("div", { class: "hint" }, "Claude's wording of what you wrote (nothing added):"),
+      h("div", { class: "polished-text" }, p.polished),
+      p.note ? h("div", { class: "hint" }, p.note) : null,
+      h("div", { class: "row mt" },
+        h("button", { class: "primary", onclick: quiet(() => clear().then(() => { text.value = p.polished; showPolish(null); }), "Using Claude's wording") }, "Use this wording"),
+        h("button", { onclick: quiet(() => clear().then(() => showPolish(null))) }, "Keep mine"))));
+  };
+  const draftBtn = h("button", { onclick: quiet(() => api("POST", "/api/gap-drafts", { actionId: a.id }).then(() => { card.dataset.state = ""; show({ status: "requested" }); pollDrafts(); })) }, "Draft with Claude");
+  /** Shows where the draft stands: waiting (spinner), ready, or nothing to draft from. */
+  const show = (d) => {
+    const status = d && d.status;
+    draftBtn.textContent = status === "ready" || status === "none" ? "Draft again" : "Draft with Claude";
+    draftBtn.disabled = status === "requested";
+    if (status === "requested") {
+      const run = (d && d.run) || { running: true };
+      const retry = h("button", { onclick: quiet(() => api("POST", "/api/gap-drafts", { actionId: a.id }).then(() => { card.dataset.state = ""; show({ status: "requested" }); pollDrafts(); })) }, "Try again");
+      const cancel = h("button", { onclick: quiet(() => api("POST", "/api/gap-drafts/cancel", { actionId: a.id }).then(() => show(null)), "Request cancelled") }, "Cancel");
+      if (run.running) {
+        panel.replaceChildren(h("div", { class: "drafting", role: "status" }, h("span", { class: "spin" }),
+          h("div", { class: "grow" }, h("strong", {}, "Claude is drafting this…"), h("div", { class: "hint" }, "Usually under a minute. Leave this page open: the draft appears here by itself.")), cancel));
+      } else {
+        const why = run.error ? `Claude could not draft this: ${run.error}` : run.available === false
+          ? "Claude cannot be started from the dashboard on this computer. Run /gaps in a Claude session and the draft appears here."
+          : "Claude finished without drafting this one.";
+        panel.replaceChildren(h("div", { class: "drafting" }, h("div", { class: "grow" }, h("strong", {}, why)), run.available === false ? null : retry, cancel));
+      }
+    } else if (status === "ready") {
+      panel.replaceChildren(h("div", { class: "draft-note ok" }, "Drafted by Claude from your facts. Read it, fix anything that is not true, then save.", d.note ? h("div", { class: "hint" }, d.note) : null));
+    } else if (status === "none") {
+      panel.replaceChildren(h("div", { class: "draft-note" }, "Claude found nothing in your facts that covers this, so the box is empty.", d.note ? h("div", { class: "hint" }, d.note) : null));
+    } else panel.replaceChildren();
+  };
+  const card = h("div", { class: "card warn-card", "data-gap": String(a.id) },
+    h("div", { class: "row" }, h("span", { class: "badge gap" }, "gap"), g.importance ? h("span", { class: `badge ${g.importance === "required" ? "bad" : ""}` }, label(g.importance)) : null, a.jobId ? jobLink(a) : null),
+    h("h2", { class: "mt-sm" }, g.requirement || "A requirement"),
+    g.detail ? h("div", { class: "muted" }, g.detail) : null,
+    closest.length ? h("div", { class: "hint" }, "Closest things you have saved: ", closest.map((f) => `"${f.text}"`).join("; ")) : null,
+    h("div", { class: "field mt-lg" }, h("div", { class: "row" }, h("label", { class: "grow" }, "What have you actually done that covers this?"), polishBtn, draftBtn), text),
+    panel,
+    polishPanel,
+    h("div", { class: "row" },
+      h("div", { class: "field" }, h("label", {}, "It is"), kind),
+      h("div", { class: "field" }, h("label", {}, "Add it under"), role)),
+    h("div", { class: "row mt" },
+      h("button", { class: "primary", onclick: act(() => save("job"), "Saved for this job") }, "Save for this job only"),
+      h("button", { onclick: act(() => save("general"), "Saved to your facts") }, "Save for all my jobs"),
+      confirmButton("I don't have this", "Click again: stop listing it", () => api("POST", `/api/actions/${a.id}/resolve`, { status: "dismissed" }))));
+  registry.push({ filled: () => text.value.trim().length > 0, save });
+  /** Called by the poller with the gap's latest state. A draft never overwrites what the user already typed. */
+  card.applyDraft = (latest, run) => {
+    const lg = latest.payload || {};
+    show(lg.draft ? { ...lg.draft, run } : lg.draft);
+    showPolish(lg.polish, run);
+    const d = lg.suggestedFact;
+    if (lg.draft && lg.draft.status === "ready" && d && !text.value.trim()) { text.value = d.text || ""; kind.value = d.kind || kind.value; }
+  };
+  show(g.draft);
+  showPolish(g.polish);
+  if ((g.draft && g.draft.status === "requested") || (g.polish && g.polish.status === "requested")) pollDrafts();
+  return card;
+}
+
+/** Like act, but keeps the page as it is, so text typed in other boxes is not lost. */
+const quiet = (fn, okText) => async (ev) => {
+  const btn = ev && ev.currentTarget && ev.currentTarget.tagName === "BUTTON" ? ev.currentTarget : null;
+  if (btn) { btn.classList.add("busy"); btn.disabled = true; }
+  try { await fn(); if (okText) toast("ok", okText); } catch (e) { showError(e); if (btn) btn.disabled = false; } finally { if (btn) btn.classList.remove("busy"); }
+};
+
+let draftTimer = null;
+/** While any gap card on screen is waiting for Claude, look every 3 seconds and show what arrived. */
+function pollDrafts() {
+  if (draftTimer) return;
+  draftTimer = setInterval(async () => {
+    const waiting = [...document.querySelectorAll("[data-gap]")].filter((c) => c.applyDraft);
+    if (!waiting.length) { clearInterval(draftTimer); draftTimer = null; return; }
+    try {
+      const [items, run] = await Promise.all([api("GET", "/api/actions"), api("GET", "/api/gap-drafts/status")]);
+      let pending = 0;
+      for (const c of waiting) {
+        const latest = items.find((i) => String(i.id) === c.dataset.gap);
+        if (!latest) { c.remove(); continue; }
+        const dSt = (latest.payload.draft && latest.payload.draft.status) || "";
+        const pSt = (latest.payload.polish && latest.payload.polish.status) || "";
+        const waitingNow = dSt === "requested" || pSt === "requested";
+        if (waitingNow) pending++;
+        const key = `${dSt}|${pSt}|${waitingNow ? `${run.running}:${run.error || ""}:${run.available}` : ""}`;
+        if (c.dataset.state !== key) { c.dataset.state = key; c.applyDraft(latest, run); }
+      }
+      if (!pending) { clearInterval(draftTimer); draftTimer = null; }
+    } catch { /* the next look tries again */ }
+  }, 3000);
+}
+
+/** The gap cards, with one button to save every box that has been filled in. */
+async function gapList(list) {
+  const [facts, cv] = await Promise.all([api("GET", "/api/facts"), api("GET", "/api/cv")]);
+  const ctx = { facts: new Map(facts.map((f) => [f.id, f])), entries: cv.entries.filter((e) => e.kind !== "education") };
+  const registry = [];
+  const scope = h("select", {}, h("option", { value: "job" }, "for each gap's own job"), h("option", { value: "general" }, "for all my jobs"));
+  const cards = list.map((a) => gapCard(a, ctx, registry));
+  view.append(h("div", { class: "card" }, h("div", { class: "row" },
+    h("strong", { class: "grow" }, `${list.length} gap${list.length === 1 ? "" : "s"}. Fill in what you have done, then save.`),
+    h("button", { onclick: act(() => api("POST", "/api/metric-gaps", {}).then((r) => showNote(r.added ? `Added ${r.added} bullet${r.added === 1 ? "" : "s"} that need a number. ${r.left} more without one.` : "Every bullet already has a number, or you said you have none."))) }, "Ask for numbers"),
+    h("button", { onclick: act(() => api("POST", "/api/gap-drafts", { all: true }).then((r) => { showNote(r.requested ? `Asked Claude to draft ${r.requested} gap${r.requested === 1 ? "" : "s"}. Run /gaps in a Claude session.` : "Every gap is already waiting for Claude."); })) }, "Draft all with Claude"),
+    scope,
+    h("button", { class: "primary", onclick: act(async () => {
+      const todo = registry.filter((r) => r.filled());
+      if (!todo.length) throw new Error("Fill in at least one box first");
+      for (const r of todo) await r.save(scope.value);
+      showNote(`Saved ${todo.length} fact${todo.length === 1 ? "" : "s"}. Run /tailor again on those jobs to use them.`);
+    }) }, "Save all filled boxes")),
+    h("div", { class: "hint" }, "A gap you leave empty stays here. Claude only drafts from facts you already saved, and nothing is saved until you press a save button.")));
+  cards.forEach((c) => view.append(c));
 }
 
 const SCOPE_TEXT = { worldwide: "remote, worldwide", open_to_me: "remote, open to you" };
 const SPONSOR_TEXT = { confirmed: "sponsors visas", likely: "on a sponsor register" };
 
+const levelName = (v) => ((lists && lists.seniorityLevels.find((l) => l.value === v)) || { label: v }).label;
+
 function signalBadges(j) {
   return [
+    j.levelFit === "stretch" ? h("span", { class: "badge warn", title: "One step away from the levels you want. Ranked a little lower." }, `asks ${levelName(j.seniority)}: a stretch`) : null,
+    j.levelFit === "mismatch" ? h("span", { class: "badge bad", title: "Two or more steps away from the levels you want. Ranked lower." }, `asks ${levelName(j.seniority)}: level mismatch`) : null,
     SCOPE_TEXT[j.remoteScope] && h("span", { class: "badge", title: "The posting lets someone in your country work remotely" }, SCOPE_TEXT[j.remoteScope]),
     SPONSOR_TEXT[j.sponsorship] && h("span", { class: "badge", title: j.sponsorshipEvidence || "" }, SPONSOR_TEXT[j.sponsorship]),
   ].filter(Boolean);
@@ -230,7 +658,7 @@ function addLinksBox() {
   } }, "Check the links");
   return h("div", { class: "card" },
     h("h2", {}, "Add job links"), box,
-    h("div", { class: "row", style: "margin-top:8px" }, check, copy, h("label", {}, go, " also fill each application (it still stops for your review)")),
+    h("div", { class: "row mt" }, check, copy, h("label", {}, go, " also fill each application (it still stops for your review)")),
     result);
 }
 
@@ -242,7 +670,7 @@ async function pipelineView() {
   for (const j of jobs) (byState[j.state] ||= []).push(j);
   for (const [state, list] of Object.entries(byState)) {
     view.append(h("h2", {}, `${label(state)} (${list.length})`));
-    view.append(h("table", {}, list.map((j) => h("tr", {},
+    view.append(h("table", { class: "card-table" }, list.map((j) => h("tr", {},
       h("td", {}, h("a", { href: `#/jobs/${j.id}` }, j.title), h("span", { class: "muted" }, `  #${j.id}`), h("div", { class: "muted" }, j.company || "")),
       h("td", { class: "muted" }, j.matchScore !== undefined ? `${j.matchScore}` : ""),
       h("td", {}, signalBadges(j)),
@@ -282,7 +710,11 @@ async function jobView(id) {
     d.messages.forEach((m) => view.append(messageCard(m, () => jobView(id))));
   }
   const gaps = d.actions.filter((a) => a.kind === "gap");
-  if (gaps.length) { view.append(h("h2", {}, "Gaps")); gaps.forEach((a) => view.append(gapCard(a))); }
+  if (gaps.length) {
+    view.append(h("div", { class: "row" }, h("h2", { class: "grow" }, "Gaps"),
+      h("button", { onclick: act(() => api("POST", "/api/gap-drafts", { jobId: id }).then(() => showNote("Asked Claude to draft these. Run /gaps in a Claude session."))) }, "Draft all with Claude")));
+    gaps.forEach((a) => view.append(gapCard(a)));
+  }
   const others = d.actions.filter((a) => a.kind !== "gap");
   if (others.length) { view.append(h("h2", {}, "Waiting on you")); others.forEach((a) => view.append(actionCard(a))); }
 
@@ -301,7 +733,7 @@ async function jobView(id) {
   if (posting.description) {
     view.append(h("div", { class: "muted" }, [posting.postedBy && `Posted by: ${posting.postedBy}`, posting.applyUrl && safeHref(posting.applyUrl) && "apply link saved", `saved ${(posting.detailsAt || "").slice(0, 16)}`].filter(Boolean).join("  |  ")),
       h("details", { class: "card" }, h("summary", {}, `Saved text (${posting.description.length} characters)`),
-        h("div", { style: "white-space:pre-wrap;margin-top:8px" }, posting.description)));
+        h("div", { class: "pre mt" }, posting.description)));
   } else {
     view.append(h("div", { class: "muted" }, "No posting text saved yet. Tailoring will open the page once and save it."));
   }
@@ -334,7 +766,7 @@ async function jobView(id) {
   }
   const cEmail = h("input", { type: "email", placeholder: "email address" });
   const cName = h("input", { placeholder: "name (optional)" });
-  view.append(h("details", { style: "margin:6px 0" }, h("summary", { class: "muted" }, "Add a contact myself"),
+  view.append(h("details", { class: "my-sm" }, h("summary", { class: "muted" }, "Add a contact myself"),
     h("div", { class: "row" }, cEmail, cName,
       h("button", { class: "primary", onclick: act(() => api("POST", `/api/jobs/${id}/contacts`, { email: cEmail.value, name: cName.value })) }, "Add"))));
   if ((d.emails || []).length) {
@@ -344,18 +776,33 @@ async function jobView(id) {
 
   view.append(h("h2", {}, "Link checks"));
   view.append(d.verifications.length
-    ? h("table", {}, d.verifications.map((v) => h("tr", {}, h("td", {}, v.checked_at), h("td", {}, v.result), h("td", { class: "muted" }, v.evidence || ""))))
+    ? h("table", { class: "card-table" }, d.verifications.map((v) => h("tr", {}, h("td", {}, v.checked_at), h("td", {}, v.result), h("td", { class: "muted" }, v.evidence || ""))))
     : h("div", { class: "muted" }, "None yet."));
 
   view.append(h("h2", {}, "Documents"));
   if (!d.documents.length) view.append(h("div", { class: "muted" }, "None yet."));
+  /** The ATS score of a CV, with what to fix. It appears once Claude has scored the CV (the tailoring does it). */
+  const scoreBox = (docId) => {
+    const box = h("div", { class: "hint" }, "Checking the ATS score...");
+    api("GET", `/api/documents/${docId}/score`).then((r) => {
+      if (r.score === null || r.score === undefined) { box.textContent = "Not scored yet. Run /tailor on this job and Claude scores the CV against the posting's keywords."; return; }
+      const parts = r.parts;
+      const kw = (r.keywords || []).map((k) => h("span", { class: `badge ${k.found ? "" : k.critical ? "bad" : "gap"}`, title: k.found ? `found ${k.count}x in ${k.where.join(", ")}` : "not on the CV" }, `${k.found ? "" : "missing: "}${k.term}`));
+      box.className = "";
+      box.replaceChildren(
+        h("div", { class: "row" }, h("strong", {}, `ATS score ${r.score} / 100`),
+          h("span", { class: "muted" }, `formatting ${parts.formatting}/30, keywords ${parts.keywords}/30 (${Math.round(r.coverage * 100)}% matched, target 80%), evidence ${parts.evidence}/20, summary ${parts.summary}/20`)),
+        h("div", { class: "row" }, kw),
+        r.issues && r.issues.length ? h("ul", { class: "muted" }, r.issues.map((i) => h("li", {}, i))) : null,
+        (r.issues || []).some((i) => /carry a number/.test(i)) ? h("a", { href: "#/facts" }, "Add numbers to your bullets") : null);
+    }).catch(() => { box.textContent = ""; });
+    return box;
+  };
   const docCard = (doc) => h("div", { class: "card" },
     h("div", { class: "row" }, h("span", { class: "badge" }, `${doc.kind} v${doc.version}`), h("span", { class: "muted" }, doc.path),
       doc.path.toLowerCase().endsWith(".pdf") && h("a", { href: `/api/documents/${doc.id}/file`, target: "_blank", rel: "noopener noreferrer" }, "Open PDF"),
-      h("button", { class: "danger", onclick: act(async () => {
-        if (!confirm(`Delete ${doc.kind} v${doc.version} and its file? This cannot be undone.`)) return;
-        await api("DELETE", `/api/documents/${doc.id}`, {});
-      }) }, "Delete")),
+      confirmButton("Delete", "Click again: delete this and its file", () => api("DELETE", `/api/documents/${doc.id}`, {}))),
+    doc.kind === "cv" ? scoreBox(doc.id) : null,
     doc.blocks.map((b) => h("p", { class: b.kind === "boilerplate" ? "muted" : "" }, b.text,
       b.factIds.length ? h("span", { class: "muted" }, `  [facts ${b.factIds.join(", ")}]`) : null)));
   // The newest version of each kind is shown; older versions are folded away so they do not look like repeats.
@@ -370,7 +817,7 @@ async function jobView(id) {
   }
 
   view.append(h("h2", {}, "History"));
-  view.append(h("table", {}, d.events.map((e) => h("tr", {},
+  view.append(h("table", { class: "card-table" }, d.events.map((e) => h("tr", {},
     h("td", { class: "muted" }, e.at), h("td", {}, e.actor), h("td", {}, label(e.type))))));
 }
 
@@ -380,10 +827,15 @@ async function factsView() {
   const text = h("textarea", { placeholder: "A true statement about you. Include real numbers and dates." });
   const range = h("input", { placeholder: "dates (optional)" });
   const note = h("input", { placeholder: "where this is documented (optional)" });
+  const metric = await api("GET", "/api/metric-gaps");
   view.replaceChildren(
     h("h1", {}, `Facts (${facts.length})`),
+    metric.withoutNumber ? h("div", { class: "card" }, h("div", { class: "row" },
+      h("div", { class: "grow" }, h("strong", {}, `${metric.withoutNumber} bullet${metric.withoutNumber === 1 ? "" : "s"} have no number`),
+        h("div", { class: "hint" }, "A number on a bullet reads as proof and raises the CV's ATS score. You answer a few at a time in Needs you, under Gaps. Only numbers you can stand behind.")),
+      h("button", { class: "primary", onclick: act(async () => { const r = await api("POST", "/api/metric-gaps", {}); showNote(`Added ${r.added} card${r.added === 1 ? "" : "s"} in Needs you, under Gaps.`); }) }, "Ask me for numbers"))) : null,
     h("div", { class: "card" }, h("div", { class: "row" }, kind, range, note), text,
-      h("div", { class: "row", style: "margin-top:8px" },
+      h("div", { class: "row mt" },
         h("button", { class: "primary", onclick: act(() => api("POST", "/api/facts", {
           kind: kind.value, text: text.value, dateRange: range.value || undefined, sourceNote: note.value || undefined,
         })) }, "Add fact"))));
@@ -396,7 +848,7 @@ async function factsView() {
       f.sourceNote && h("div", { class: "muted" }, f.sourceNote),
       h("div", { class: "row" },
         f.jobId !== undefined && h("button", { onclick: act(() => api("POST", `/api/facts/${f.id}/make-general`, {})) }, "Make general"),
-        h("button", { class: "danger", onclick: act(() => api("DELETE", `/api/facts/${f.id}`, {})) }, "Delete"))));
+        confirmButton("Delete", "Click again to delete", () => api("DELETE", `/api/facts/${f.id}`, {})))));
   }
 }
 
@@ -448,12 +900,12 @@ function entryForm(kind, e, submit) {
 }
 
 function bulletRow(b) {
-  const row = h("div", { class: "row", style: "align-items:flex-start;margin:4px 0;flex-wrap:nowrap" });
+  const row = h("div", { class: "row-top" });
   const show = () => {
     row.replaceChildren(
-      h("span", { style: "flex:1" }, "• " + b.text),
+      h("span", { class: "grow" }, "• " + b.text),
       h("button", { onclick: edit }, "Edit"),
-      h("button", { class: "danger", onclick: act(() => api("DELETE", `/api/facts/${b.id}`, {})) }, "Delete"));
+      confirmButton("Delete", "Click again", () => api("DELETE", `/api/facts/${b.id}`, {})));
   };
   const edit = () => {
     const t = h("textarea", {});
@@ -470,30 +922,30 @@ function entryCard(e) {
   const meta = [e.organization, e.location, e.country && `country: ${e.country}`, e.employmentType && e.employmentType.replace("_", "-"), dateText(e)].filter(Boolean).join("  |  ");
   const card = h("div", { class: "card" },
     h("div", { class: "row" },
-      h("strong", { style: "flex:1" }, e.title),
+      h("strong", { class: "grow" }, e.title),
       h("button", { onclick: act(() => api("POST", `/api/cv/entries/${e.id}/move`, { direction: "up" })) }, "↑"),
       h("button", { onclick: act(() => api("POST", `/api/cv/entries/${e.id}/move`, { direction: "down" })) }, "↓"),
-      h("button", { class: "danger", onclick: act(() => api("DELETE", `/api/cv/entries/${e.id}`, {})) }, "Delete")),
+      confirmButton("Delete", "Click again to delete this and its bullets", () => api("DELETE", `/api/cv/entries/${e.id}`, {}))),
     meta && h("div", { class: "muted" }, meta),
     e.note && h("div", { class: "muted" }, e.note),
-    !e.startDate && e.kind === "work" && h("div", { class: "muted", style: "color:var(--warn)" }, "No dates yet. Edit this entry to add them."),
-    h("details", { style: "margin:8px 0" }, h("summary", { class: "muted" }, "Edit details"),
+    !e.startDate && e.kind === "work" && h("div", { class: "muted warn" }, "No dates yet. Edit this entry to add them."),
+    h("details", { class: "my" }, h("summary", { class: "muted" }, "Edit details"),
       entryForm(e.kind, e, (body) => api("PUT", `/api/cv/entries/${e.id}`, body))));
   if (e.kind !== "education") {
     for (const b of e.bullets) card.append(bulletRow(b));
     const t = h("textarea", { placeholder: "Add a bullet: one true statement, with real numbers" });
-    card.append(h("div", { style: "margin-top:6px" }, t,
+    card.append(h("div", { class: "mt-sm" }, t,
       h("button", { onclick: act(() => api("POST", `/api/cv/entries/${e.id}/bullets`, { text: t.value })) }, "Add bullet")));
   }
   return card;
 }
 
 function skillGroupCard(g) {
-  const input = h("input", { style: "flex:1;min-width:200px" });
-  input.value = g.skills.map((s) => s.text).join(", ");
+  const input = h("input", { class: "grow grow-min" });
+  input.value = g.skills.map((s) => (s.level ? `${s.text}:${s.level}` : s.text)).join(", ");
   return h("div", { class: "card" }, h("div", { class: "row" }, h("strong", {}, g.group), input,
     h("button", { class: "primary", onclick: act(() => api("PUT", "/api/cv/skills", { group: g.group, items: input.value.split(",") })) }, "Save"),
-    h("button", { class: "danger", onclick: act(() => api("PUT", "/api/cv/skills", { group: g.group, items: [] })) }, "Remove group")));
+    confirmButton("Remove group", "Click again to remove the group", () => api("PUT", "/api/cv/skills", { group: g.group, items: [] }))));
 }
 
 async function cvView() {
@@ -510,9 +962,9 @@ async function cvView() {
       entryForm(kind, null, (body) => api("POST", "/api/cv/entries", body))));
     for (const e of m.entries.filter((x) => x.kind === kind)) view.append(entryCard(e));
   }
-  view.append(h("h2", {}, "Skills"));
+  view.append(h("h2", {}, "Skills"), h("p", { class: "muted" }, "Add a level after a colon if you want sites that ask for one to get it: Python:advanced, Docker:intermediate. Levels are beginner, intermediate, advanced or expert. A skill with no level uses your default from Settings, or Claude asks you."));
   const gname = h("input", { placeholder: "Group, e.g. Backend" });
-  const gitems = h("input", { placeholder: "Skills, comma separated", style: "flex:1;min-width:200px" });
+  const gitems = h("input", { placeholder: "Skills, comma separated. A level is optional: Python:advanced", class: "grow grow-min" });
   view.append(h("div", { class: "card" }, h("div", { class: "row" }, gname, gitems,
     h("button", { class: "primary", onclick: act(() => api("PUT", "/api/cv/skills", { group: gname.value, items: gitems.value.split(",") })) }, "Add group"))));
   for (const g of m.skills) view.append(skillGroupCard(g));
@@ -530,9 +982,9 @@ function orderedPicker(label, options, selected) {
   const draw = () => {
     add.replaceChildren(h("option", { value: "" }, "Add one..."), ...options.filter((o) => !state.includes(o[0])).map((o) => h("option", { value: o[0] }, o[1])));
     box.replaceChildren(
-      ...state.map((v, i) => h("div", { class: "row", style: "margin:2px 0" },
+      ...state.map((v, i) => h("div", { class: "row my-xs" },
         h("span", { class: "badge" }, String(i + 1)),
-        h("span", { style: "flex:1" }, text(v)),
+        h("span", { class: "grow" }, text(v)),
         h("button", { onclick: () => { if (i > 0) { [state[i - 1], state[i]] = [state[i], state[i - 1]]; draw(); } } }, "↑"),
         h("button", { onclick: () => { if (i < state.length - 1) { [state[i + 1], state[i]] = [state[i], state[i + 1]]; draw(); } } }, "↓"),
         h("button", { class: "danger", onclick: () => { state.splice(i, 1); draw(); } }, "Remove"))),
@@ -542,7 +994,7 @@ function orderedPicker(label, options, selected) {
   draw();
   return {
     el: h("div", { class: "field" }, h("label", {}, label), box,
-      dropped.length > 0 && h("div", { class: "muted", style: "color:var(--warn)" }, `Not recognised and removed: ${dropped.join(", ")}. Save to keep the cleaned list.`)),
+      dropped.length > 0 && h("div", { class: "muted warn" }, `Not recognised and removed: ${dropped.join(", ")}. Save to keep the cleaned list.`)),
     get: () => [...state],
   };
 }
@@ -555,11 +1007,15 @@ function orderedPicker(label, options, selected) {
 const statusBadge = (st) => h("span", { class: `badge${st === "prepared" ? " gap" : ""}` }, st === "prepared" ? "waiting for you" : st);
 
 async function applicationsView() {
-  const list = await api("GET", "/api/applications");
+  const [list, room] = await Promise.all([api("GET", "/api/applications"), api("GET", "/api/application-count")]);
   const waiting = list.filter((a) => a.status === "prepared");
   const rest = list.filter((a) => a.status !== "prepared");
   view.replaceChildren(h("h1", {}, "Applications"),
-    h("p", { class: "muted" }, "Forms the agent filled in and left open for you. Nothing is submitted until you click Submit on the site yourself."));
+    h("p", { class: "muted" }, "Forms the agent filled in and left open for you. Nothing is submitted until you click Submit on the site yourself."),
+    h("div", { class: "card" }, h("div", { class: "row" },
+      h("div", { class: "grow" }, h("strong", {}, `Today: ${room.used} of ${room.limit} applications used or waiting`),
+        h("div", { class: "hint" }, room.remaining ? `Claude can start ${room.remaining} more today.` : "The limit is full, so Claude will not start another form.")),
+      confirmButton("Reset today's count", "Click again: start the count from zero", () => api("POST", "/api/application-count/reset", {})))));
   const row = (a) => h("div", { class: "card" }, h("div", { class: "row" }, statusBadge(a.status),
     h("a", { href: `#/applications/${a.jobId}` }, a.jobTitle), a.company && h("span", { class: "muted" }, a.company), h("span", { class: "muted" }, a.route)));
   view.append(h("h2", {}, `Waiting for you (${waiting.length})`));
@@ -580,7 +1036,9 @@ async function applicationView(jobId) {
   if (a.status === "prepared") {
     view.append(h("div", { class: "card" },
       h("p", {}, "The agent filled this form in its browser tab and left it open. Check it there, fill what was left for you, then click Submit on the site yourself. Come back and press \"I submitted it\"."),
-      safeHref(a.formUrl) && h("p", {}, h("a", { href: safeHref(a.formUrl), target: "_blank", rel: "noopener noreferrer" }, "Open the form in a new tab"), h("span", { class: "muted" }, "  (a new tab will not have the agent's entries; use its own tab)"))));
+      safeHref(a.formUrl) && h("p", {}, h("a", { href: safeHref(a.formUrl), target: "_blank", rel: "noopener noreferrer" }, "Open the form in a new tab"), h("span", { class: "muted" }, "  (a new tab will not have the agent's entries; use its own tab)")),
+      h("div", { class: "hint" }, "If the browser window was closed, the filled form is gone but your answers are saved here. Refill puts them back without writing anything again."),
+      refillBox(jobId)));
   }
   if (a.salaryQuoted) {
     view.append(h("div", { class: "card" }, h("strong", {}, `Salary entered: ${a.salaryQuoted} per ${a.salaryPeriod}`), h("div", { class: "muted" }, a.salaryReason || "")));
@@ -595,9 +1053,9 @@ async function applicationView(jobId) {
     sensitive.forEach((x) => view.append(h("div", { class: "card" }, h("div", { class: "muted" }, x.question), h("div", {}, x.answer))));
   }
   view.append(h("h2", {}, `Everything entered (${a.answers.length})`));
-  view.append(h("table", {}, a.answers.map((x) => h("tr", {},
-    h("td", { class: "muted", style: "width:40%" }, x.question),
-    h("td", { style: "white-space:pre-wrap" }, x.answer.length > 400 ? `${x.answer.slice(0, 400)}...` : x.answer,
+  view.append(h("table", { class: "card-table" }, a.answers.map((x) => h("tr", {},
+    h("td", { class: "muted w40" }, x.question),
+    h("td", { class: "pre" }, x.answer.length > 400 ? `${x.answer.slice(0, 400)}...` : x.answer,
       x.documentId ? h("div", {}, h("a", { href: `/api/documents/${x.documentId}/file`, target: "_blank", rel: "noopener noreferrer" }, "Open the cover letter PDF")) : null),
     h("td", {}, h("span", { class: "badge" }, x.kind.replace("_", " ")),
       x.check === "verified" ? h("span", { class: "badge good", title: x.checkNote || "Follows from its source" }, "✓ checked")
@@ -614,8 +1072,8 @@ async function applicationView(jobId) {
       if (!armed) { armed = true; done.textContent = "Click again: I submitted it on the site"; setTimeout(() => { armed = false; done.textContent = "I submitted it"; }, 6000); return; }
       try { await api("POST", `/api/applications/${jobId}/submitted`, {}); await render(); showNote("Recorded. It counts toward today's limit."); } catch (e) { armed = false; done.textContent = "I submitted it"; showError(e); }
     } }, "I submitted it");
-    view.append(h("div", { class: "row", style: "margin-top:12px" }, done,
-      h("button", { class: "danger", onclick: act(async () => { await api("POST", `/api/applications/${jobId}/discard`, {}); location.hash = "#/applications"; }) }, "Discard")));
+    view.append(h("div", { class: "row mt-lg" }, done,
+      confirmButton("Discard", "Click again to discard the prepared form", async () => { await api("POST", `/api/applications/${jobId}/discard`, {}); location.hash = "#/applications"; })));
   } else if (a.sentAt) {
     view.append(h("div", { class: "muted" }, `Submitted ${a.sentAt}`));
   }
@@ -652,21 +1110,32 @@ async function companiesView() {
       } catch (err) { note.textContent = String(err.message || err); e.target.disabled = false; }
     } }, "Collect Y Combinator companies"),
     h("button", { disabled: s.notSearched === 0, onclick: async (e) => {
-      busy(e, "Looking for career pages, a few at a time. This can take a minute...");
+      // Keeps going, 40 at a time, until none are left or the user stops it.
+      const btn = e.target;
+      let stop = false;
+      const stopBtn = h("button", { onclick: () => { stop = true; stopBtn.disabled = true; stopBtn.textContent = "Stopping after this batch..."; } }, "Stop");
+      btn.after(stopBtn);
+      btn.disabled = true;
+      let checked = 0, found = 0, remaining = s.notSearched;
       try {
-        const r = await api("POST", "/api/companies/find-careers", { limit: 40 });
-        note.textContent = `Looked at ${r.checked}: ${r.found} career pages found, ${r.none} with none, ${r.needsBrowser} need a browser, ${r.unreachable} not reachable. ${r.remaining} still to look at.`;
-        await companiesView();
-      } catch (err) { note.textContent = String(err.message || err); e.target.disabled = false; }
-    } }, `Find career pages (${s.notSearched} waiting)`), note));
+        while (!stop && remaining > 0) {
+          note.textContent = `Looking for career pages: ${checked} checked, ${found} found, ${remaining} to go...`;
+          const r = await api("POST", "/api/companies/find-careers", { limit: 40 });
+          checked += r.checked; found += r.found; remaining = r.remaining;
+          if (!r.checked) break;
+        }
+        note.textContent = `${checked} checked, ${found} career pages found. ${remaining} still to look at${stop ? " (stopped)" : ""}.`;
+      } catch (err) { note.textContent = String(err.message || err); }
+      stopBtn.remove();
+      await companiesView();
+    } }, `Find all career pages (${s.notSearched} waiting)`), note));
   if (s.total) {
     view.append(h("p", { class: "muted" },
       `${s.readyToScout} ready for /scout  ·  career page: ${s.careers.found} found, ${s.careers.none} none, ${s.careers.unknown} unknown`));
   }
 
   // The three lists are side by side so one click switches between them.
-  view.append(h("div", { class: "tabs" }, TABS.map(([v, text]) =>
-    h("button", { class: `tab ${v}${v === tab ? " on" : ""}`, onclick: () => goto({ v: v === "unreviewed" ? "" : v }) }, `${text} (${s.verdicts[v]})`))));
+  view.append(tabBar(TABS.map(([v, text]) => ({ id: v, text, count: s.verdicts[v], cls: v })), tab, (v) => goto({ v: v === "unreviewed" ? "" : v })));
 
   const q = h("input", { placeholder: "search name, what they do, industry", value: params.get("q") || "" });
   const remote = h("input", { type: "checkbox" });
@@ -720,8 +1189,8 @@ function messageCard(m, refresh) {
       h("span", { class: "muted" }, m.receivedAt.replace("T", " ").slice(0, 16))),
     h("div", {}, h("strong", {}, m.fromName ? `${m.fromName} ` : ""), h("span", { class: "muted" }, `<${m.fromAddr}>`)),
     h("div", {}, m.subject),
-    m.snippet ? h("div", { class: "muted", style: "white-space:pre-wrap" }, m.snippet) : h("div", { class: "muted" }, "(the text was removed after the retention period)"),
-    h("div", { class: "row", style: "margin-top:8px" },
+    m.snippet ? h("div", { class: "muted pre" }, m.snippet) : h("div", { class: "muted" }, "(the text was removed after the retention period)"),
+    h("div", { class: "row mt" },
       category,
       m.jobId && m.category !== "bounce" && m.category !== "auto_reply" ? outcome("interview", "It is an interview") : null,
       m.jobId && m.category !== "bounce" && m.category !== "auto_reply" ? outcome("rejected", "It is a rejection") : null,
@@ -758,8 +1227,7 @@ async function repliesView() {
   }
 
   const counts = (s) => d.messages.filter((m) => m.status === s).length;
-  view.append(h("div", { class: "tabs" }, REPLY_TABS.map(([v, text]) =>
-    h("button", { class: `tab ${v === "new" ? "" : v === "ignored" ? "discarded" : "potential"}${v === tab ? " on" : ""}`, onclick: () => { location.hash = `#/replies${v === "new" ? "" : `?v=${v}`}`; } }, `${text} (${counts(v)})`))));
+  view.append(tabBar(REPLY_TABS.map(([v, text]) => ({ id: v, text, count: counts(v), cls: v === "new" ? "" : v === "ignored" ? "discarded" : "potential" })), tab, (v) => { location.hash = `#/replies${v === "new" ? "" : `?v=${v}`}`; }));
   const shown = d.messages.filter((m) => m.status === tab);
   if (!shown.length) view.append(h("div", { class: "empty" }, tab === "new" ? (d.sync.lastRunAt ? "No new replies." : "Press Check replies to look for answers.") : "Nothing here."));
   shown.forEach((m) => view.append(messageCard(m, repliesView)));
@@ -783,7 +1251,7 @@ function manualApplicationForm(refresh) {
     h("div", { class: "row" }, url.el, date.el),
     h("div", { class: "row" }, h("div", { class: "field" }, h("label", {}, "How you applied"), how), h("div", { class: "field" }, h("label", {}, "Where it stands now"), status), contact.el),
     notes.el,
-    h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "primary", onclick: act(async () => {
+    h("div", { class: "row mt" }, h("button", { class: "primary", onclick: act(async () => {
       await api("POST", "/api/tracker", { title: title.get(), company: company.get(), url: url.get(), appliedOn: date.get(), how: how.value, status: status.value, contactEmail: contact.get(), notes: notes.get() });
       showNote("Recorded.");
       await refresh();
@@ -805,17 +1273,31 @@ function forgetButton(r) {
   return btn;
 }
 
+/** Which sites' candidate profiles are known to be finished. Claude skips the profile for those; "Not finished" makes it check again. */
+function siteProfilesBox(profiles, redraw) {
+  if (!profiles.length) return null;
+  return h("div", { class: "card" }, h("h2", {}, "Site profiles"),
+    h("div", { class: "hint" }, "A site's profile that is marked complete is not checked or asked for again. If clicking Apply on a site sends Claude back to the profile, it marks it not finished by itself."),
+    h("table", { class: "card-table" }, profiles.map((x) => h("tr", {},
+      h("td", {}, h("strong", {}, x.site)),
+      h("td", { class: "muted" }, x.complete ? `complete (${x.source === "user" ? "you said so" : "Claude saw it"}), ${x.updatedAt.slice(0, 10)}` : `not finished, ${x.updatedAt.slice(0, 10)}`, x.evidence ? h("div", {}, x.evidence) : null),
+      h("td", {}, h("button", { onclick: act(async () => { await api("POST", "/api/site-profiles", { site: x.site, complete: !x.complete }); await redraw(); }) }, x.complete ? "Not finished" : "Mark complete"))))));
+}
+
 async function accountsView() {
-  const rows = await api("GET", "/api/accounts");
+  const [rows, profiles] = await Promise.all([api("GET", "/api/accounts"), api("GET", "/api/site-profiles")]);
   view.replaceChildren(h("h1", {}, `Accounts (${rows.length})`),
     h("p", { class: "muted" }, "Sites where you have an account made through this tool. The passwords are in your vault and are never shown: copy one when you need it. Passwords stay saved until you forget an account, which deletes its saved password too (the vault must be unlocked) and means you would reset it on the site to get back in."));
+  const profilesBox = siteProfilesBox(profiles, accountsView);
+  if (profilesBox) view.append(profilesBox);
   if (!rows.length) { view.append(h("div", { class: "empty" }, "No accounts yet. They appear when an application needs one.")); return; }
-  view.append(h("table", {}, rows.map((r) => h("tr", {},
+  view.append(h("table", { class: "card-table" }, rows.map((r) => h("tr", {},
     h("td", {}, h("strong", {}, r.site), h("div", { class: "muted" }, r.username)),
-    h("td", { class: "muted" }, r.confirmedAt ? `created ${r.confirmedAt.slice(0, 10)}` : "password saved, account not confirmed", r.verifiedAt ? h("div", {}, "email verified") : null),
+    h("td", { class: "muted" }, r.confirmedAt ? `created ${r.confirmedAt.slice(0, 10)}` : "password saved, account not confirmed", r.verifiedAt ? h("div", {}, "email verified") : null,
+      !r.verifiedAt && r.status !== "disabled" ? h("div", {}, h("button", { onclick: async (e) => { e.target.disabled = true; try { const x = await api("POST", "/api/replies/sync", {}); showNote(x.verifications ? `Found ${x.verifications} verification email${x.verifications === 1 ? "" : "s"}: see Needs you.` : "No verification email yet. It can take a minute: try again."); await accountsView(); } catch (err) { e.target.disabled = false; showError(err); } } }, "Look for the verification email")) : null),
     h("td", {}, h("button", { onclick: async () => { try { await api("POST", `/api/accounts/${r.id}/copy`, { what: "username" }); showNote("Copied."); } catch (e) { showError(e); } } }, "Copy email"),
       h("button", { onclick: async () => { try { const x = await api("POST", `/api/accounts/${r.id}/copy`, { what: "password" }); showNote(`Password copied. It leaves the clipboard in ${x.clearsInSeconds} seconds.`); } catch (e) { showError(e); } } }, "Copy password")),
-    h("td", {}, !r.verifiedAt ? h("button", { onclick: act(() => api("POST", `/api/accounts/${r.id}/verified`, {})) }, "Mark email verified") : null,
+    h("td", {}, profileCommandBox(r.jobId), !r.verifiedAt ? h("button", { onclick: act(() => api("POST", `/api/accounts/${r.id}/verified`, {})) }, "Mark email verified") : null,
       forgetButton(r))))));
 }
 
@@ -834,7 +1316,7 @@ async function trackerView() {
   view.append(h("div", { class: "row" }, h("label", {}, byHand, " only the ones I applied for by hand")));
   const shown = rows.filter((r) => !only || r.manual);
   if (!shown.length) { view.append(h("div", { class: "empty" }, only ? "None recorded by hand yet." : "Nothing has gone out yet.")); return; }
-  view.append(h("table", {}, shown.map((r) => {
+  view.append(h("table", { class: "card-table" }, shown.map((r) => {
     const move = r.allowed.length ? h("select", {}, h("option", { value: "" }, "Change status..."), r.allowed.map((s) => h("option", { value: s }, label(s)))) : null;
     if (move) move.addEventListener("change", act(async () => { if (move.value) { await api("POST", `/api/jobs/${r.jobId}/transition`, { to: move.value }); await trackerView(); } }));
     return h("tr", {},
@@ -867,7 +1349,7 @@ async function emailView(id) {
   const c = e.contact;
   const subject = textField("Subject", e.subject);
   subject.input.disabled = !editable;
-  const body = h("textarea", { style: "min-height:340px" });
+  const body = h("textarea", { class: "tall" });
   body.value = e.bodyText;
   body.disabled = !editable;
   const save = () => api("PUT", `/api/emails/${id}`, { subject: subject.get(), bodyText: body.value });
@@ -904,7 +1386,9 @@ async function emailView(id) {
     !e.domainMismatch && e.domainUnclear && h("p", { class: "warn" }, "This address could not be compared with the company's website (its domain is not recorded, or it is a free mail address). Check that it belongs to the right person."),
     c.status === "bounced" && h("p", { class: "bad" }, "This address bounced before. Do not send to it."),
     c.browserEvidence && h("p", { class: "warn" },
-      "The server could not open the company's page (the site blocks automated requests), so the agent read it in a real browser and quoted this line: ",
+      c.browserEvidence.rule === "posting_page"
+        ? "The agent read the job's own posting in a real browser (the page builds itself, so the server could not see the address) and quoted this line: "
+        : "The server could not open the company's page (the site blocks automated requests), so the agent read it in a real browser and quoted this line: ",
       h("em", {}, `“${c.browserEvidence.quote}”`), " on ",
       safeHref(c.browserEvidence.pageUrl) ? h("a", { href: safeHref(c.browserEvidence.pageUrl), target: "_blank", rel: "noopener noreferrer" }, "this page") : "the page",
       ". Open it to check the address before you send."),
@@ -921,11 +1405,11 @@ async function emailView(id) {
       e.coverAttachment ? h("span", {}, "  and your cover letter ", h("a", { href: `/api/documents/${e.coverAttachment.documentId}/file`, target: "_blank", rel: "noopener noreferrer" }, "(open PDF)")) : "") : "No CV attached."));
   if (e.edited) view.append(h("div", { class: "muted" }, "You have edited the agent's draft."));
 
-  const buttons = h("div", { class: "row", style: "margin-top:12px" });
+  const buttons = h("div", { class: "row mt-lg" });
   if (editable) {
     buttons.append(sendBtn,
       h("button", { onclick: act(save) }, "Save edits"),
-      h("button", { class: "danger", onclick: act(async () => { await api("POST", `/api/emails/${id}/discard`, {}); location.hash = "#/emails"; }) }, "Discard"));
+      confirmButton("Discard", "Click again to discard the draft", async () => { await api("POST", `/api/emails/${id}/discard`, {}); location.hash = "#/emails"; }));
   } else if (e.status === "sent") {
     buttons.append(h("span", { class: "muted" }, `Sent ${e.sentAt || ""}`),
       c.status !== "bounced" && h("button", { class: "danger", title: "Only press this if a delivery-failure message came back for this email. It stops this address from being used again.", onclick: act(() => api("POST", `/api/contacts/${c.id}/bounced`, {})) }, "Mark this address as bounced"),
@@ -977,9 +1461,9 @@ async function vaultView() {
     h("div", { class: "card" },
       h("p", {}, profile && profile.email ? `Emails are sent from ${profile.email}.` : "Set your email address in Settings (About you) first."),
       mail ? h("div", { class: "row" }, h("span", { class: "badge" }, "app password saved"), h("span", { class: "muted" }, `updated ${mail.updatedAt.slice(0, 16).replace("T", " ")}`),
-        h("button", { class: "danger", onclick: act(() => api("DELETE", "/api/vault/secrets/mail.smtp", {})) }, "Remove"))
+        confirmButton("Remove", "Click again to remove the saved mail login", () => api("DELETE", "/api/vault/secrets/mail.smtp", {})))
         : h("p", { class: "muted" }, "No mail password saved yet."),
-      h("details", { style: "margin:8px 0" }, h("summary", {}, "How to get a Gmail app password"),
+      h("details", { class: "my" }, h("summary", {}, "How to get a Gmail app password"),
         h("ol", { class: "muted" },
           h("li", {}, "Open your Google Account, then Security."),
           h("li", {}, "Turn on 2-Step Verification if it is off."),
@@ -1008,8 +1492,26 @@ function changePassphraseForm() {
 // ---------- settings ----------
 
 /** A comma-separated list with an "Any" switch. Any is saved as an empty list. */
+/** Choose any number of options from a fixed list: a dropdown to add one, and a chip to remove each. Nothing can be mistyped. */
+function multiPicker(label, options, selected, emptyText) {
+  const known = new Map(options);
+  const state = [...new Set(selected.map((x) => String(x).toLowerCase()))];
+  const box = h("div", { class: "row" });
+  const add = h("select", {});
+  const draw = () => {
+    add.replaceChildren(h("option", { value: "" }, "Add one..."), ...options.filter(([v]) => !state.includes(v)).map(([v, t]) => h("option", { value: v }, t)));
+    box.replaceChildren(...state.map((v, i) => h("span", { class: `badge ${known.has(v) ? "info" : "bad"}` },
+      known.has(v) ? known.get(v) : `not a level: ${v}`, " ",
+      h("button", { class: "close", type: "button", "aria-label": `Remove ${v}`, onclick: () => { state.splice(i, 1); draw(); } }, "×"))),
+      ...(state.length ? [] : [h("span", { class: "muted" }, emptyText)]));
+  };
+  add.addEventListener("change", () => { if (add.value) { state.push(add.value); draw(); } });
+  draw();
+  return { el: h("div", { class: "field" }, h("label", {}, label), box, h("div", { class: "row mt" }, add)), get: () => state.filter((v) => known.has(v)) };
+}
+
 function anyList(label, hint, values) {
-  const input = h("input", { placeholder: hint, style: "flex:1;min-width:200px" });
+  const input = h("input", { placeholder: hint, class: "grow grow-min" });
   input.value = values.join(", ");
   const any = h("input", { type: "checkbox" });
   any.checked = values.length === 0;
@@ -1030,13 +1532,13 @@ function textField(label, value, attrs) {
 }
 
 async function settingsView() {
-  const [prefs, profile, sources, budget] = await Promise.all([
-    api("GET", "/api/preferences"), api("GET", "/api/profile"), api("GET", "/api/sources"), api("GET", "/api/budget"),
+  const [prefs, profile, sources, budget, room] = await Promise.all([
+    api("GET", "/api/preferences"), api("GET", "/api/profile"), api("GET", "/api/sources"), api("GET", "/api/budget"), api("GET", "/api/application-count"),
   ]);
   const p = prefs || { roles: [], seniority: [], locations: [], remotePolicy: "any", industries: [], exclusions: [], dailyApplicationLimit: 5, dailyDiscoveryLimit: 10 };
 
   const roles = anyList("Target roles", "Backend Engineer, Data Engineer", p.roles);
-  const level = anyList("Level", "junior, mid, senior", p.seniority);
+  const level = multiPicker("Levels I am looking for", lists.seniorityLevels.map((l) => [l.value, l.label]), p.seniority, "Any level. Pick one or more to narrow it down.");
   const where = anyList("Locations", "Addis Ababa, Remote", p.locations);
   const industries = anyList("Industries", "fintech, health", p.industries);
   const exclusions = textField("Exclude (companies or keywords, comma separated)", (p.exclusions || []).join(", "));
@@ -1073,9 +1575,21 @@ async function settingsView() {
   coverLetters.value = p.coverLetters || "auto";
   const coverGuidance = h("textarea", { placeholder: "e.g. Warm but direct. Lead with my payments work. Never longer than three paragraphs." });
   coverGuidance.value = p.coverGuidance || "";
+  const writingStyle = h("textarea", { class: "tall-sm", placeholder: "e.g. Plain and warm, like a message to a colleague. Short sentences. No lists of tools. Start with what I like about their product, not with who I am." });
+  writingStyle.value = p.writingStyle || "";
 
   const cookieBanners = h("select", {}, [["accept", "Accept all cookies, so pages are not blocked"], ["necessary", "Allow only the strictly necessary cookies"]].map(([v, t]) => h("option", { value: v }, t)));
   cookieBanners.value = p.cookieBanners || "accept";
+  const skillLevel = h("select", {}, [["", "Ask me each time"], ["beginner", "Beginner"], ["intermediate", "Intermediate"], ["advanced", "Advanced"], ["expert", "Expert"]].map(([v, t]) => h("option", { value: v }, t)));
+  skillLevel.value = p.defaultSkillLevel || "";
+  const QMODE = [["batch", "Batch: all at the end, in the chat and as cards (recommended)"], ["chat", "Ask me in the chat right away"], ["cards", "Cards in Needs you only"]];
+  const questionMode = h("select", {}, QMODE.map(([v, t]) => h("option", { value: v }, t)));
+  questionMode.value = p.questionMode || "batch";
+  const overrideSelects = lists.questionCategories.map((c) => {
+    const sel = h("select", {}, h("option", { value: "" }, "Use my main choice"), QMODE.map(([v, t]) => h("option", { value: v }, t.split(":")[0].replace(" (recommended)", ""))), h("option", { value: "never" }, "Never ask"));
+    sel.value = (p.questionOverrides || {})[c.value] || "";
+    return { id: c.value, label: c.label, sel };
+  });
   const autoReplied = h("input", { type: "checkbox" });
   autoReplied.checked = p.autoMarkReplied !== false;
   const followDays = textField("Suggest a follow-up after (days with no reply)", String(p.followUpDays ?? 7));
@@ -1094,7 +1608,11 @@ async function settingsView() {
     cvGuidance: guidance.value,
     coverLetters: coverLetters.value,
     coverGuidance: coverGuidance.value,
+    writingStyle: writingStyle.value,
     cookieBanners: cookieBanners.value,
+    defaultSkillLevel: skillLevel.value || undefined,
+    questionMode: questionMode.value,
+    questionOverrides: Object.fromEntries(overrideSelects.filter((o) => o.sel.value).map((o) => [o.id, o.sel.value])),
     autoMarkReplied: autoReplied.checked,
     followUpDays: Number(followDays.get()),
     maxFollowUps: Number(followMax.get()),
@@ -1129,9 +1647,19 @@ async function settingsView() {
       h("div", { class: "field" }, h("label", {}, "How my CVs should be built (the agent follows this when tailoring)"), guidance),
       h("div", { class: "field" }, h("label", {}, "Cover letters"), coverLetters,
         h("div", { class: "muted" }, "When on, the agent writes one for each email job (attached with your CV) and for any form that has a cover letter field. Every claim must rest on your facts.")),
+      h("div", { class: "field" }, h("label", {}, "How everything written for me should sound"), writingStyle,
+        h("div", { class: "hint" }, "Used for emails, cover letters and free-text answers on forms. Claude also follows a built-in writing guide, and your words here come first.")),
       h("div", { class: "field" }, h("label", {}, "How my cover letters should read"), coverGuidance),
       h("div", { class: "field" }, h("label", {}, "Cookie banners on the sites the agent visits"), cookieBanners,
         h("div", { class: "muted" }, "Accepting cookies lets pages load without a banner in the way. This is only about cookies: it never ticks the consent boxes inside an application form.")),
+      h("div", { class: "field" }, h("label", {}, "Skill level for a skill I have not given one, when a site asks for it"), skillLevel,
+        h("div", { class: "muted" }, "You can set a level on each skill on the CV page. Choosing a default here means every skill without its own level is given that one. Leave it on Ask me if you would rather say each time.")),
+      h("h2", {}, "When Claude needs an answer only I can give"),
+      h("div", { class: "field" }, h("label", {}, "How it asks"), questionMode,
+        h("div", { class: "hint" }, "Batch: Claude fills everything it can, then sends one message with every open question and also files them as cards. You answer once and it finishes while the page is still open. In a long run over several jobs, asking right away becomes one batch at the end.")),
+      h("div", { class: "card" }, h("strong", {}, "A different way for one kind of question"),
+        overrideSelects.map((o) => h("div", { class: "row my-sm" }, h("span", { class: "grow" }, o.label), o.sel)),
+        h("div", { class: "hint" }, "Never ask: Claude uses your default if there is one (for skill levels) or leaves it blank and lists it.")),
       h("h2", {}, "Replies and follow-ups"),
       h("div", { class: "field" }, h("label", {}, autoReplied, " When someone answers an email of mine directly (same thread), move the job to replied by itself"),
         h("div", { class: "muted" }, "Other matches are only suggested. A rejection or an interview is always your decision.")),
@@ -1140,12 +1668,15 @@ async function settingsView() {
       h("h2", {}, "Daily limits"),
       h("div", { class: "muted" }, `Today: ${budget.addedToday} of ${budget.limit} jobs added.`),
       h("div", { class: "row" }, discovery.el, applications.el),
-      h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "primary", onclick: savePrefs }, "Save search settings"))));
+      h("div", { class: "row" },
+        h("div", { class: "muted grow" }, `Applications today: ${room.used} of ${room.limit} used or waiting. The count only stops Claude from starting a new form; a form already filled is always saved.`),
+        confirmButton("Reset today's count", "Click again: start the count from zero", () => api("POST", "/api/application-count/reset", {}))),
+      h("div", { class: "row mt-lg" }, h("button", { class: "primary", onclick: savePrefs }, "Save search settings"))));
 
   // sources
   const kind = h("select", {}, [["jobsite", "job site"], ["careers_page", "company careers page"], ["email_contact", "email contact"]].map(([v, t]) => h("option", { value: v }, t)));
   const name = h("input", { placeholder: "name, e.g. remoteok.com" });
-  const url = h("input", { placeholder: "https://... (optional)", style: "flex:1;min-width:200px" });
+  const url = h("input", { placeholder: "https://... (optional)", class: "grow grow-min" });
   view.append(
     h("h2", {}, "Sites to search"),
     h("div", { class: "muted" }, "Sites you list here are always searched when switched on. With \"Search any site\" ticked above, the agent also uses Google and company career pages. Sites it finds on its own show as agent-added and are not searched until you add them."),
@@ -1161,16 +1692,16 @@ async function settingsView() {
 
   // standard answers
   const sa = await api("GET", "/api/standard-answers");
-  const saLabel = h("input", { placeholder: "question, e.g. How did you hear about us?", style: "flex:1;min-width:200px" });
-  const saAnswer = h("input", { placeholder: "your answer", style: "flex:1;min-width:200px" });
-  const quick = ["How did you hear about us?", "Gender", "Race or ethnicity", "Disability status", "Veteran status", "Are you willing to relocate?", "Are you legally authorized to work in the country of the job?"];
+  const saLabel = h("input", { placeholder: "question, e.g. How did you hear about us?", class: "grow grow-min" });
+  const saAnswer = h("input", { placeholder: "your answer", class: "grow grow-min" });
+  const quick = ["Equity preference", "Minimum salary: how firm is it?", "Preferred company size", "Job search status", "How did you hear about us?", "Gender", "Race or ethnicity", "Disability status", "Veteran status", "Are you willing to relocate?", "Are you legally authorized to work in the country of the job?"];
   view.append(h("h2", {}, "Standard answers"),
     h("div", { class: "muted" }, "Your own answers to questions forms keep asking, including demographic ones. The agent uses them word for word, and never guesses one for you. A question with no saved answer is left for you."),
     h("div", { class: "row" }, quick.map((q) => h("button", { onclick: () => { saLabel.value = q; saAnswer.focus(); } }, q))),
     h("div", { class: "card" }, h("div", { class: "row" }, saLabel, saAnswer,
       h("button", { class: "primary", onclick: act(() => api("PUT", "/api/standard-answers", { label: saLabel.value, answer: saAnswer.value })) }, "Save"))),
-    ...sa.map((x) => h("div", { class: "card" }, h("div", { class: "row" }, h("strong", { style: "flex:1" }, x.label), h("span", {}, x.answer),
-      h("button", { class: "danger", onclick: act(() => api("DELETE", `/api/standard-answers/${x.id}`, {})) }, "Delete")))));
+    ...sa.map((x) => h("div", { class: "card" }, h("div", { class: "row" }, h("strong", { class: "grow" }, x.label), h("span", {}, x.answer),
+      confirmButton("Delete", "Click again to delete", () => api("DELETE", `/api/standard-answers/${x.id}`, {}))))));
 
   // profile
   const name2 = textField("Full name", profile?.fullName);
@@ -1192,7 +1723,7 @@ async function settingsView() {
           ? `Not said yet, but your work authorization text says you ${profile.inferredSponsorship.value ? "need" : "do not need"} sponsorship, so forms are answered ${profile.inferredSponsorship.value ? "Yes" : "No"}. Pick it here to make it exact.`
           : "Forms ask this. The agent answers from this setting, and leaves the question blank if it is not said.")),
       notice.el, langs.el,
-      h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "primary", onclick: act(() => api("PUT", "/api/profile", {
+      h("div", { class: "row mt-lg" }, h("button", { class: "primary", onclick: act(() => api("PUT", "/api/profile", {
         fullName: name2.get(), email: email.get(), phone: phone.get(), location: loc.get(), links: list(links),
         workAuthorization: auth.get(), requiresSponsorship: sponsor.value === "yes" ? true : sponsor.value === "no" ? false : null, noticePeriod: notice.get(), languages: list(langs),
       })) }, "Save profile"))));
@@ -1205,6 +1736,9 @@ let currentPrefs = null;
 
 async function render() {
   const [, page, arg] = location.hash.split("?")[0].split("/");
+  view.classList.add("is-loading");
+  view.setAttribute("aria-busy", "true");
+  document.title = `${({ pipeline: "Pipeline", jobs: "Job", cv: "CV", facts: "Facts", applications: "Forms", emails: "Emails", replies: "Replies", tracker: "Tracker", accounts: "Accounts", companies: "Companies", vault: "Vault", settings: "Settings" })[page] || "Needs you"} · jobhunt`;
   let queueCount = 0;
   let repliesNew = 0;
   try {
@@ -1228,19 +1762,28 @@ async function render() {
   } catch (e) {
     view.replaceChildren(h("div", { class: "error" }, String(e.message || e)));
   }
+  const link = (href, text, active, count) => h("a", { href, class: `nav-link${active ? " active" : ""}`, "aria-current": active ? "page" : undefined },
+    h("span", {}, text), count ? h("span", { class: "pill" }, String(count)) : null);
+  const group = (title, ...links) => h("div", { class: "nav-group" }, title ? h("div", { class: "nav-title" }, title) : null, ...links);
   nav.replaceChildren(
-    h("a", { href: "#/", class: !page ? "active" : "" }, `Needs you${queueCount ? ` (${queueCount})` : ""}`),
-    h("a", { href: "#/pipeline", class: page === "pipeline" || page === "jobs" ? "active" : "" }, "Pipeline"),
-    h("a", { href: "#/tracker", class: page === "tracker" ? "active" : "" }, "Tracker"),
-    h("a", { href: "#/cv", class: page === "cv" ? "active" : "" }, "CV"),
-    h("a", { href: "#/facts", class: page === "facts" ? "active" : "" }, "Facts"),
-    h("a", { href: "#/companies", class: page === "companies" ? "active" : "" }, "Companies"),
-    h("a", { href: "#/applications", class: page === "applications" ? "active" : "" }, "Forms"),
-    h("a", { href: "#/emails", class: page === "emails" ? "active" : "" }, "Emails"),
-    h("a", { href: "#/accounts", class: page === "accounts" ? "active" : "" }, "Accounts"),
-    h("a", { href: "#/replies", class: page === "replies" ? "active" : "" }, `Replies${repliesNew ? ` (${repliesNew})` : ""}`),
-    h("a", { href: "#/vault", class: page === "vault" ? "active" : "" }, "Vault"),
-    h("a", { href: "#/settings", class: page === "settings" ? "active" : "" }, "Settings"));
+    group("Work",
+      link("#/", "Needs you", !page, queueCount),
+      link("#/pipeline", "Pipeline", page === "pipeline" || page === "jobs"),
+      link("#/tracker", "Tracker", page === "tracker")),
+    group("Find", link("#/companies", "Companies", page === "companies")),
+    group("Apply",
+      link("#/applications", "Forms", page === "applications"),
+      link("#/emails", "Emails", page === "emails"),
+      link("#/replies", "Replies", page === "replies", repliesNew),
+      link("#/accounts", "Accounts", page === "accounts")),
+    group("Your material",
+      link("#/cv", "CV", page === "cv"),
+      link("#/facts", "Facts", page === "facts")),
+    group("System",
+      link("#/settings", "Settings", page === "settings"),
+      link("#/vault", "Vault", page === "vault")));
+  view.classList.remove("is-loading");
+  view.removeAttribute("aria-busy");
 }
 
 window.addEventListener("hashchange", render);

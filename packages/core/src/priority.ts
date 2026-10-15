@@ -24,8 +24,11 @@ export function priorityScore(
   remoteScope: RemoteScope | undefined,
   sponsorship: Sponsorship,
   mode: PriorityMode,
+  levelFit?: "match" | "stretch" | "mismatch",
 ): number {
   const w = WEIGHTS[mode];
   const bonus = w.remote * REMOTE_SHARE[remoteScope ?? "unclear"] + w.sponsor * SPONSOR_SHARE[sponsorship];
-  return (matchScore ?? 0) + bonus;
+  // A job at the wrong level is shown, but lower: one step off costs a point, further off three.
+  const levelPenalty = levelFit === "mismatch" ? 3 : levelFit === "stretch" ? 1 : 0;
+  return (matchScore ?? 0) + bonus - levelPenalty;
 }

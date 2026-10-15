@@ -1,10 +1,12 @@
 import type { DB } from "./db.js";
 import { queueAction } from "./actionQueue.js";
 import { checkProvenance, listDocuments, ProvenanceError, type Block } from "./documents.js";
-import { applicationsToday } from "./email.js";
+import { applicationsToday, countResetAt } from "./email.js";
+import { assertWellWritten } from "./writingLint.js";
 import { logEvent, transitionJob } from "./jobs.js";
 import { coverText } from "./cover.js";
 import { norm } from "./answerCheck.js";
+import { experienceSummary, listEntries } from "./cv.js";
 import { checkObserved, checkProfileAnswer, checkStandardAnswer, resolveSources, type Check } from "./answerCheck.js";
 import { getPreferences, getProfile, requireHuman } from "./profile.js";
 import type { Actor, JobState } from "./states.js";
@@ -97,9 +99,24 @@ export function listApplications(db: DB, status?: string): ApplicationRow[] {
 
 /** Prepared forms waiting for the user, plus today's submissions, against the user's daily limit. */
 function capUsed(db: DB): number {
-  const waiting = (db.prepare("SELECT COUNT(*) AS n FROM applications WHERE status = 'prepared'").get() as { n: number }).n;
-  const waitingEmails = (db.prepare("SELECT COUNT(*) AS n FROM emails WHERE kind = 'application' AND status IN ('draft','sending','failed')").get() as { n: number }).n;
+  const since = countResetAt(db);
+  const waiting = (db.prepare("SELECT COUNT(*) AS n FROM applications WHERE status = 'prepared' AND COALESCE(prepared_at, '') > ?").get(since) as { n: number }).n;
+  const waitingEmails = (db.prepare("SELECT COUNT(*) AS n FROM emails WHERE kind = 'application' AND status IN ('draft','sending','failed') AND created_at > ?").get(since) as { n: number }).n;
   return applicationsToday(db) + waiting + waitingEmails;
+}
+
+/** How many more applications may be started today. Checked before a form is filled, not when it is recorded. */
+export function applicationRoom(db: DB): { limit: number; used: number; remaining: number } {
+  const limit = getPreferences(db)?.dailyApplicationLimit ?? 5;
+  const used = capUsed(db);
+  return { limit, used, remaining: Math.max(0, limit - used) };
+}
+
+/** Called before a new form is opened and filled, so the work is never done only to be refused at the end. A form already prepared (a refill) is not new. */
+export function assertApplicationRoom(db: DB, jobId: number): void {
+  if (getApplication(db, jobId)?.status === "prepared") return;
+  const r = applicationRoom(db);
+  if (r.remaining <= 0) throw new Error(`Daily limit reached (${r.used} of ${r.limit} applications used or waiting). Do not fill this form. The user can raise "Applications per day" in Settings, submit what is waiting, or reset the count`);
 }
 
 /**
@@ -111,16 +128,15 @@ export function prepareApplication(db: DB, input: PrepareInput, actor: Actor): {
     const job = db.prepare("SELECT id, route, state FROM jobs WHERE id = ?").get(input.jobId) as { id: number; route: string; state: JobState } | undefined;
     if (!job) throw new Error(`Job ${input.jobId} not found`);
     if (job.route !== "form") throw new Error("This job does not apply through a form");
-    if (job.state !== "materials_ready") throw new Error(`Build the CV first: the job must be materials_ready (it is ${job.state})`);
-    if (!listDocuments(db, input.jobId).some((d) => d.kind === "cv")) throw new Error("There is no CV for this job. Run the tailoring first");
-    try { new URL(input.formUrl); } catch { throw new Error("A prepared application needs the link of the form"); }
-
     const existing = getApplication(db, input.jobId);
     if (existing?.status === "submitted") throw new Error("This application was already submitted");
+    // A form that is already prepared can be recorded again (the browser tab was lost and the form was refilled).
+    const refilling = job.state === "awaiting_approval" && existing?.status === "prepared";
+    if (job.state !== "materials_ready" && !refilling) throw new Error(`Build the CV first: the job must be materials_ready (it is ${job.state})`);
+    if (!listDocuments(db, input.jobId).some((d) => d.kind === "cv")) throw new Error("There is no CV for this job. Run the tailoring first");
+    try { new URL(input.formUrl); } catch { throw new Error("A prepared application needs the link of the form"); }
+    // The daily limit is not checked here: it was checked before the form was filled (assertApplicationRoom), and a form that is already filled is always recorded.
     const prefs = getPreferences(db);
-    const limit = prefs?.dailyApplicationLimit ?? 5;
-    const used = capUsed(db) - (existing?.status === "prepared" ? 1 : 0);
-    if (used >= limit) throw new Error(`Daily limit reached (${used} of ${limit} applications used or waiting). Raise "Applications per day" in Settings, or submit what is waiting first`);
 
     if (input.answers.length === 0) throw new Error("Record the answers you entered");
     for (const a of input.answers) {
@@ -133,13 +149,15 @@ export function prepareApplication(db: DB, input: PrepareInput, actor: Actor): {
     // when the wording differs from the source it is flagged for the user to read, not refused.
     const profile = getProfile(db);
     const standard = listStandardAnswers(db);
+    const exp = experienceSummary(listEntries(db));
+    const derived = { experienceYears: exp?.years, experienceMonths: exp?.months };
     const checkedAnswers: AnswerInput[] = input.answers.map((a) => {
       const label = `"${a.question.slice(0, 60)}"`;
       let r: { check: Check; note?: string } | undefined;
       if (a.kind === "profile" || a.kind === "standard") {
-        const src = resolveSources(a.from, a.kind, { profile, standard });
+        const src = resolveSources(a.from, a.kind, { profile, standard, derived });
         if (!src.ok) throw new Error(`${label}: ${src.problem}`);
-        r = a.kind === "profile" ? checkProfileAnswer(a.question, a.answer, src.fields, profile!) : checkStandardAnswer(a.answer, src.labels, a.options);
+        r = a.kind === "profile" ? checkProfileAnswer(a.question, a.answer, src.fields, profile!, derived) : checkStandardAnswer(a.answer, src.labels, a.options);
       } else if (a.kind === "cover_letter") {
         const doc = a.documentId === undefined ? undefined : listDocuments(db, input.jobId).find((d) => d.id === a.documentId && d.kind === "cover");
         if (!doc) throw new Error(`${label}: name the saved cover letter of this job in documentId (save_cover_letter returns it)`);
@@ -154,6 +172,10 @@ export function prepareApplication(db: DB, input: PrepareInput, actor: Actor): {
       if (seen) r = seen;
       return r ? { ...a, check: r.check, checkNote: r.note?.slice(0, 300) } : { ...a, check: undefined, checkNote: undefined };
     });
+
+    // A message or a long free-text answer must follow the writing guide (short answers such as a salary reason are not messages).
+    const messages = input.answers.filter((a) => a.kind === "free_text" && a.answer.length >= 120).map((a) => a.answer);
+    if (messages.length) assertWellWritten(messages, "The message you wrote");
 
     // Free text about the user is checked like a CV or an email: every claim cites the facts it rests on.
     const blocks: Block[] = input.answers
@@ -189,8 +211,8 @@ export function prepareApplication(db: DB, input: PrepareInput, actor: Actor): {
     ).run(input.jobId, input.formUrl, JSON.stringify(checkedAnswers), JSON.stringify(input.leftBlank), input.salaryQuoted ?? null, salaryPeriod, input.salaryReason?.trim() ?? null, input.notes?.slice(0, 1000) ?? null);
 
     queueAction(db, "confirm_submit", input.jobId, { formUrl: input.formUrl, answers: input.answers.length, leftBlank: input.leftBlank.length, differ: checkedAnswers.filter((a) => a.check === "differs").length }, actor);
-    transitionJob(db, input.jobId, "awaiting_approval", actor, "form prepared");
-    logEvent(db, actor, "application_prepared", input.jobId, { answers: input.answers.length, leftBlank: input.leftBlank.length, differ: checkedAnswers.filter((a) => a.check === "differs").length });
+    if (!refilling) transitionJob(db, input.jobId, "awaiting_approval", actor, "form prepared");
+    logEvent(db, actor, refilling ? "application_refilled" : "application_prepared", input.jobId, { answers: input.answers.length, leftBlank: input.leftBlank.length, differ: checkedAnswers.filter((a) => a.check === "differs").length });
     return { applicationId: getApplication(db, input.jobId)!.id };
   })();
 }
@@ -249,4 +271,14 @@ export function deleteStandardAnswer(db: DB, id: number, actor: Actor): void {
   requireHuman(actor, "standard answers");
   const info = db.prepare("DELETE FROM standard_answers WHERE id = ?").run(id);
   if (info.changes === 0) throw new Error(`Standard answer ${id} not found`);
+}
+
+/**
+ * What was entered in a prepared form, so the agent can put the same answers back when the browser tab was lost. It returns the answers
+ * exactly as recorded: nothing has to be written again. Only for a form that is still waiting for the user.
+ */
+export function getPreparedApplication(db: DB, jobId: number): Pick<Application, "jobId" | "formUrl" | "answers" | "leftBlank" | "salaryQuoted" | "salaryPeriod" | "salaryReason" | "preparedAt"> {
+  const a = getApplication(db, jobId);
+  if (!a || a.status !== "prepared") throw new Error("There is no prepared form waiting for this job");
+  return { jobId: a.jobId, formUrl: a.formUrl, answers: a.answers, leftBlank: a.leftBlank, salaryQuoted: a.salaryQuoted, salaryPeriod: a.salaryPeriod, salaryReason: a.salaryReason, preparedAt: a.preparedAt };
 }

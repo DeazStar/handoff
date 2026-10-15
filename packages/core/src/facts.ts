@@ -19,6 +19,8 @@ export interface Fact {
   entryId?: number;
   /** For skills: the group they are listed under on the CV. */
   skillGroup?: string;
+  /** For skills: how well the user says they know it. Only ever set by the user. */
+  skillLevel?: "beginner" | "intermediate" | "advanced" | "expert";
 }
 
 export interface NewFact {
@@ -42,6 +44,7 @@ const toFact = (r: any): Fact => ({
   jobId: r.job_id ?? undefined,
   entryId: r.entry_id ?? undefined,
   skillGroup: r.skill_group ?? undefined,
+  skillLevel: r.skill_level ?? undefined,
 });
 
 /**

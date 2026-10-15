@@ -1,7 +1,8 @@
 import type { DB } from "./db.js";
 import { checkProvenance, ProvenanceError, type Block } from "./documents.js";
 import { getFacts, type Fact } from "./facts.js";
-import { getEntry, listEntries, type CvEntry, type EntryKind } from "./cv.js";
+import { experienceSummary, getEntry, listEntries, type CvEntry, type EntryKind } from "./cv.js";
+import { fillerIn } from "./writingLint.js";
 import { getPreferences, getProfile } from "./profile.js";
 
 /**
@@ -12,7 +13,9 @@ import { getPreferences, getProfile } from "./profile.js";
 export type BulletRef = number | { text: string; factIds: number[] };
 
 export interface CvPlan {
-  /** One to three sentences. Each must cite facts and its numbers must match them. */
+  /** A short label under the name, such as "Backend-leaning Full-Stack Engineer". No seniority the user's real titles do not back. */
+  headline?: string;
+  /** One to three short sentences about who the user is, their experience and their skills; no first person, no results or numbers except "N years" (the server's own count). Each cites facts. */
   summary?: { text: string; factIds: number[] }[];
   /** Order here is the order on the page. Bullets must be facts of that entry. */
   experience?: { entryId: number; bullets: BulletRef[] }[];
@@ -40,7 +43,7 @@ export function orderForCv<T extends { weight: string; country?: string; employm
 }
 
 export interface ResolvedCv {
-  header: { name: string; email?: string; phone?: string; location?: string; links: string[] };
+  header: { name: string; headline?: string; email?: string; phone?: string; location?: string; links: string[] };
   summary: string[];
   experience: { entry: CvEntry; bullets: string[] }[];
   projects: { entry: CvEntry; bullets: string[] }[];
@@ -49,6 +52,78 @@ export interface ResolvedCv {
 }
 
 const MAX_SUMMARY = 3;
+const MAX_SUMMARY_WORDS = 30;
+const MAX_HEADLINE = 60;
+const FIRST_I = /\b(?:I|I['’](?:m|ve|d|ll)|myself)\b/;
+const FIRST_MY = /\b(?:my|me|mine)\b/i;
+const firstPerson = (t: string) => FIRST_I.exec(t)?.[0] ?? FIRST_MY.exec(t)?.[0];
+const SENIORITY_WORDS = /\b(senior|sr|lead|staff|principal|head|director|chief|architect|manager|vp)\b/i;
+const YEARS = /\b(\d{1,2})\+?\s+years?\b/gi;
+
+/** An "N years" claim may use the years the server counted from the dated roles, and no more. Returns the allowed number tokens. */
+export function yearsCheck(text: string, maxYears: number | undefined): { problems: string[]; allow: string[] } {
+  const problems: string[] = [];
+  const allow: string[] = [];
+  for (const m of text.matchAll(YEARS)) {
+    const claimed = Number(m[1]);
+    if (maxYears === undefined) problems.push(`"${m[0]}" cannot be checked because your roles have no start dates`);
+    else if (claimed > maxYears) problems.push(`"${m[0]}" is more than the ${maxYears} full years your dated roles add up to`);
+    else allow.push(m[1]!);
+  }
+  return { problems, allow };
+}
+
+/** Problems with a summary beyond the facts check: voice, length, filler, and a years claim the server cannot back. */
+export function summaryProblems(texts: string[], maxYears: number | undefined): { problems: string[]; allow: string[][] } {
+  const problems: string[] = [];
+  const allow: string[][] = [];
+  texts.forEach((t, i) => {
+    const n = `summary sentence ${i + 1}`;
+    const person = firstPerson(t);
+    if (person) problems.push(`${n}: a CV summary has no first person ("${person}"). Write "Backend engineer who..." and not "I lead..."`);
+    const words = t.trim().split(/\s+/).length;
+    if (words > MAX_SUMMARY_WORDS) problems.push(`${n}: ${words} words; keep each sentence under ${MAX_SUMMARY_WORDS}. Split it or cut it`);
+    const filler = fillerIn(t);
+    if (filler) problems.push(`${n}: "${filler}" is filler. Use the plain word or the result`);
+    // Results and numbers belong in the bullets. The only number a summary may carry is the years of experience.
+    if (/\d/.test(t.replace(YEARS, ""))) problems.push(`${n}: a summary has no numbers except years of experience. Put results and numbers in the bullets`);
+    const yc = yearsCheck(t, maxYears);
+    problems.push(...yc.problems.map((x) => `${n}: ${x}`));
+    const ok = yc.allow;
+    allow.push(ok);
+  });
+  return { problems, allow };
+}
+
+const WORD = /[a-z0-9]+/g;
+const words = (t: string) => (t.toLowerCase().match(WORD) ?? []).filter((w) => w.length >= 3);
+
+/** True when most of a summary sentence is copied from one bullet: the summary should say who the user is, not repeat the experience section. */
+export function repeatsBullet(sentence: string, bullets: string[]): string | undefined {
+  const s = new Set(words(sentence));
+  if (s.size < 6) return undefined;
+  return bullets.find((b) => {
+    const bw = new Set(words(b));
+    let shared = 0;
+    for (const w of s) if (bw.has(w)) shared++;
+    return shared / s.size >= 0.6;
+  });
+}
+
+/** The headline is a label, not a claim: no digits, no first person, and no seniority word that none of the user's work titles carries. */
+export function headlineProblems(headline: string, workTitles: string[]): string[] {
+  const out: string[] = [];
+  const h = headline.trim();
+  if (!h) return ["the headline is empty"];
+  if (h.length > MAX_HEADLINE) out.push(`the headline is ${h.length} characters; keep it under ${MAX_HEADLINE}`);
+  if (/\d/.test(h)) out.push("the headline has digits; put numbers in the summary");
+  if (firstPerson(h)) out.push("the headline has no first person");
+  const seniority = SENIORITY_WORDS.exec(h);
+  if (seniority && !workTitles.some((t) => new RegExp(`\\b${seniority[1]}\\b`, "i").test(t))) {
+    out.push(`the headline says "${seniority[0]}", but none of your job titles does. Describe the work instead`);
+  }
+  return out;
+}
 const MAX_BULLETS = 40;
 
 /**
@@ -77,10 +152,19 @@ export function prepareCv(
   const groups: { label: string; blocks: Block[] }[] = [];
   const used = new Set<number>();
 
+  let headline: string | undefined;
+  if (plan.headline !== undefined) {
+    const hp = headlineProblems(plan.headline, listEntries(db, "work").map((e) => e.title));
+    problems.push(...hp.map((x) => `headline: ${x}`));
+    if (!hp.length) headline = plan.headline.trim();
+  }
   const summary: string[] = [];
   if ((plan.summary?.length ?? 0) > MAX_SUMMARY) problems.push(`summary has more than ${MAX_SUMMARY} sentences`);
   if (plan.summary?.length) {
-    const blocks = plan.summary.map((b) => ({ text: b.text, factIds: b.factIds, kind: "claim" as const }));
+    const years = experienceSummary(listEntries(db))?.years;
+    const check = summaryProblems(plan.summary.map((b) => b.text), years);
+    problems.push(...check.problems);
+    const blocks = plan.summary.map((b, i) => ({ text: b.text, factIds: b.factIds, kind: "claim" as const, ...(check.allow[i]!.length ? { allowNumbers: check.allow[i] } : {}) }));
     groups.push({ label: "summary", blocks });
     summary.push(...blocks.map((b) => b.text));
     blocks.forEach((b) => b.factIds.forEach((id) => used.add(id)));
@@ -130,6 +214,14 @@ export function prepareCv(
 
   const experience = bulletSection("experience", "work", plan.experience);
   const projects = bulletSection("projects", "project", plan.projects);
+
+  if (plan.summary?.length) {
+    const bulletTexts = [...experience, ...projects].flatMap((x) => x.bullets);
+    plan.summary.forEach((b, i) => {
+      const copy = repeatsBullet(b.text, bulletTexts);
+      if (copy) problems.push(`summary sentence ${i + 1}: repeats the bullet "${copy.slice(0, 60)}...". The summary says who you are, your experience and your skills in general terms; the detail stays in the bullets`);
+    });
+  }
 
   const priorityShown = getPreferences(db)?.countryPriority ?? [];
   const priority = priorityShown.map((c) => c.toLowerCase());
@@ -207,6 +299,7 @@ export function prepareCv(
     cv: {
       header: {
         name: profile!.fullName,
+        headline,
         email: profile!.email,
         phone: profile!.phone,
         location: profile!.location,

@@ -43,6 +43,20 @@ describe("reading a raw message", () => {
   });
 });
 
+describe("links in a mail", () => {
+  it("takes the https links from the HTML and the text, once each, and drops the rest", async () => {
+    const m = (await parseRaw(Buffer.from([
+      "Message-ID: <l1@x.example>", "From: noreply@careers.acme.com", "Subject: Verify your email", "MIME-Version: 1.0", 'Content-Type: multipart/alternative; boundary="b"', "", "--b",
+      "Content-Type: text/plain; charset=utf-8", "", "Verify here: https://careers.acme.com/verify?token=abc&x=1. Or http://insecure.example/x", "--b", "Content-Type: text/html; charset=utf-8", "",
+      '<p><a href="https://careers.acme.com/verify?token=abc&amp;x=1">Verify</a> <a href="http://insecure.example/x">no</a> <a href="https://careers.acme.com/privacy">Privacy</a> <a href="javascript:alert(1)">x</a></p>', "--b--", "",
+    ].join("\r\n")), new Date()))!;
+    expect(m.links).toEqual(["https://careers.acme.com/verify?token=abc&x=1", "https://careers.acme.com/privacy"]);
+  });
+  it("has none when the message has none", async () => {
+    expect((await parseRaw(eml({ "Message-ID": "<n@x.example>", From: "a@x.example", Subject: "hi", "Content-Type": "text/plain" }, "no links here"), new Date()))!.links).toEqual([]);
+  });
+});
+
 describe("the mailbox reader", () => {
   async function reader(clientOver: object = {}) {
     const dir = mkdtempSync(join(tmpdir(), "jobhunt-imap-"));
@@ -82,6 +96,18 @@ describe("the mailbox reader", () => {
       { since: targets.since, header: { "in-reply-to": "sent1@gmail.com" } }, { since: targets.since, header: { "in-reply-to": "sent2@gmail.com" } },
       { since: targets.since, from: "acme.example" }, { since: targets.since, from: "jane@gmail.com" }, { since: targets.since, from: "mailer-daemon" },
     ]);
+  });
+
+  it("also asks for mail from the site and mail that says verify, while an account is waiting", async () => {
+    const t = await reader();
+    await t.r.fetch({ ...targets, verification: { labels: ["acme"], since: new Date("2026-10-01T00:00:00Z") } });
+    const since = new Date("2026-10-01T00:00:00Z");
+    expect(t.searches.slice(-5)).toEqual([
+      { since, from: "acme" }, { since, subject: "verify" }, { since, subject: "confirm" }, { since, subject: "activate" }, { since, subject: "welcome" },
+    ]);
+    const plain = await reader();
+    await plain.r.fetch(targets);
+    expect(plain.searches.some((s: any) => s.subject)).toBe(false);
   });
 
   it("only ever uses the read methods of the mail client: any other method would fail the test", async () => {
@@ -157,7 +183,7 @@ describe("the replies page and its routes", () => {
     saveDocument(db, { jobId, kind: "cover", path: "documents/cv.pdf", blocks: [{ text: "Hello there", factIds: [], kind: "boilerplate" }] }, "agent");
     agent.transitionJob(jobId, "materials_ready");
     const contactId = agent.addContact({ companyId, email: "jane@acme.example", name: "Jane Doe", sourceUrl: "https://acme.example/team" });
-    const { emailId } = agent.draftEmail({ jobId, contactId, blocks: [{ text: "Dear Jane,", factIds: [], kind: "boilerplate" }, { text: "I built a payments API serving 50000 users.", factIds: [fact] }, { text: "Best regards,", factIds: [], kind: "boilerplate" }] });
+    const { emailId } = agent.draftEmail({ jobId, contactId, blocks: [{ text: "Dear Jane,", factIds: [], kind: "boilerplate" }, { text: "I'm applying for the Backend Engineer role at Acme. I built a payments API serving 50000 users. My CV and cover letter are attached.", factIds: [fact] }, { text: "Best regards,", factIds: [], kind: "boilerplate" }] });
     if (opts.vault !== false) {
       await post("/api/vault/create", { passphrase: PASS });
       await put("/api/vault/mail", { password: "abcd wxyz abcd wxyz" });
@@ -245,6 +271,36 @@ describe("the replies page and its routes", () => {
     expect(msg.attachments).toEqual([]);
     expect((await job(a.jobId)).state).toBe("applied");
     expect((await post(`/api/jobs/${a.jobId}/follow-up`)).status).toBeGreaterThanOrEqual(400); // the one allowed follow-up is used
+  });
+
+  it("finds the verification mail for a waiting account and shows it, then verifies on the user's word", async () => {
+    setProfile(db, { fullName: "Ada Lovelace", email: "ada@gmail.com", links: [], languages: [] }, H);
+    await post("/api/vault/create", { passphrase: PASS });
+    await put("/api/vault/mail", { password: "abcd wxyz abcd wxyz" });
+    const { id } = await (await post("/api/accounts/start", { site: "https://careers.acme.com/signup" })).json();
+    inbox = [
+      { messageId: "<v1@mail.example>", fromAddr: "noreply@careers.acme.com", subject: "Please verify your email address", receivedAt: new Date().toISOString(), snippet: "Click to verify your email.", links: ["https://careers.acme.com/verify?token=abc"] },
+      { messageId: "<n1@news.example>", fromAddr: "news@else.example", subject: "Sale", receivedAt: new Date().toISOString(), snippet: "Buy" },
+    ];
+    const r = await (await post("/api/replies/sync")).json();
+    expect(r).toMatchObject({ verifications: 1 });
+    const list = await (await get("/api/verifications")).json();
+    expect(list).toEqual([expect.objectContaining({ accountId: id, status: "new", link: "https://careers.acme.com/verify?token=abc", linkRelated: true })]);
+    const card = (await (await get("/api/actions")).json()).find((a: any) => a.payload.mode === "verify");
+    expect(card.payload).toMatchObject({ site: "careers.acme.com", linkHost: "careers.acme.com" });
+    expect((await post(`/api/verifications/${list[0].id}/used`)).status).toBe(200);
+    expect((await (await get("/api/accounts")).json())[0]).toMatchObject({ status: "verified" });
+    expect((await (await get("/api/verifications")).json())[0]).toMatchObject({ status: "used" });
+    expect((await (await get("/api/actions")).json()).filter((a: any) => a.payload.mode === "verify")).toHaveLength(0);
+  });
+
+  it("does not open the mailbox when nothing is waiting and nothing has been sent", async () => {
+    setProfile(db, { fullName: "Ada Lovelace", email: "ada@gmail.com", links: [], languages: [] }, H);
+    await post("/api/vault/create", { passphrase: PASS });
+    await put("/api/vault/mail", { password: "abcd wxyz abcd wxyz" });
+    const r = await (await post("/api/replies/sync")).json();
+    expect(r.skipped).toMatch(/nothing to look for/);
+    expect(fetched).toBe(0);
   });
 
   it("saves the follow-up settings and refuses a nonsense value", async () => {

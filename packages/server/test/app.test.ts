@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAgentApi, openDb, type DB } from "@jobhunt/core";
 import { createVault } from "@jobhunt/vault";
-import { addFact, saveDocument, setProfile } from "@jobhunt/core";
+import { addBullet, addEntry, addFact, createHumanApi, saveDocument, setProfile } from "@jobhunt/core";
 import nodemailer from "nodemailer";
 import { createApp } from "../src/app.js";
 import { createMailer } from "../src/mail.js";
@@ -113,6 +113,68 @@ describe("api", () => {
     expect(res.status).toBe(200);
     const facts = await (await get("/api/facts")).json();
     expect(facts[0]).toMatchObject({ text: "Used Kubernetes", jobId: id });
+  });
+
+  it("asks for gap drafts and shows the draft state on the card", async () => {
+    const { agent, id } = seed();
+    const qid = agent.reportGap(id, { requirement: "Kubernetes" });
+    expect((await post("/api/gap-drafts", {})).status).toBe(400);
+    expect(await (await get("/api/gap-drafts/status")).json()).toMatchObject({ available: false, running: false });
+    expect(await (await post("/api/gap-drafts", { all: true })).json()).toEqual({ requested: 1, started: false });
+    expect((await (await get("/api/actions")).json())[0].payload.draft.status).toBe("requested");
+    agent.submitGapDraft(qid, null, "nothing in your facts");
+    expect((await (await get("/api/actions")).json())[0].payload.draft).toMatchObject({ status: "none" });
+    expect(await (await post("/api/gap-drafts/cancel", { actionId: qid })).json()).toEqual({ cancelled: 0 });
+  });
+
+  it("takes the user's wording for Claude to improve", async () => {
+    const { agent, id } = seed();
+    const qid = agent.reportGap(id, { requirement: "Kubernetes" });
+    expect((await post("/api/gap-polish", { actionId: qid, text: "  " })).status).toBe(400);
+    expect(await (await post("/api/gap-polish", { actionId: qid, text: "i used k8s" })).json()).toEqual({ started: false });
+    expect((await (await get("/api/actions")).json())[0].payload.polish).toMatchObject({ status: "requested", original: "i used k8s" });
+    agent.submitGapPolish(qid, "I used Kubernetes.");
+    expect((await (await get("/api/actions")).json())[0].payload.polish.polished).toBe("I used Kubernetes.");
+    expect((await post("/api/gap-polish/clear", { actionId: qid })).status).toBe(200);
+    expect((await (await get("/api/actions")).json())[0].payload.polish).toBeUndefined();
+  });
+
+  it("shows today's application count and lets the user reset it", async () => {
+    seed();
+    expect(await (await get("/api/application-count")).json()).toMatchObject({ used: 0 });
+    const r = await post("/api/application-count/reset", {});
+    expect([200, 400]).toContain(r.status);
+  });
+
+  it("asks for numbers on bullets and saves a number for every job", async () => {
+    const human = createHumanApi(db);
+    const entry = addEntry(db, { kind: "work", title: "Backend Engineer", organization: "Acme", startDate: "2022-03", isCurrent: true }, "human");
+    addBullet(db, entry, "Designed the login layer", "human");
+    expect(await (await get("/api/metric-gaps")).json()).toEqual({ withoutNumber: 1 });
+    expect(await (await post("/api/metric-gaps", {})).json()).toEqual({ added: 1, left: 0 });
+    const card = (await (await get("/api/actions")).json()).find((a: any) => a.payload.metric);
+    expect((await post(`/api/actions/${card.id}/confirm-metric`, { text: "no digits here" })).status).toBe(400);
+    expect((await post(`/api/actions/${card.id}/confirm-metric`, { text: "Designed the login layer for 12000 patients" })).status).toBe(200);
+    expect(human.listFacts().find((f) => f.text.includes("12000"))).toBeTruthy();
+  });
+
+  it("takes the typed number for a bullet and queues the rewording", async () => {
+    const human = createHumanApi(db);
+    const entry = addEntry(db, { kind: "work", title: "Backend Engineer", organization: "Acme", startDate: "2022-03", isCurrent: true }, "human");
+    addBullet(db, entry, "Ran the deployment pipeline", "human");
+    human.requestMetricCards(5);
+    const card = (await (await get("/api/actions")).json()).find((a: any) => a.payload.metric);
+    expect((await post("/api/metric-polish", { actionId: card.id, numbers: "many" })).status).toBe(400);
+    expect(await (await post("/api/metric-polish", { actionId: card.id, numbers: "40 deploys a week" })).json()).toEqual({ started: false });
+    expect((await (await get("/api/actions")).json()).find((a: any) => a.id === card.id).payload.polish).toMatchObject({ status: "requested", original: "Ran the deployment pipeline", numbers: "40 deploys a week" });
+  });
+
+  it("marks a site's profile complete or not, and lists it", async () => {
+    expect(await (await get("/api/site-profiles")).json()).toEqual([]);
+    expect((await post("/api/site-profiles", {})).status).toBe(400);
+    expect(await (await post("/api/site-profiles", { site: "https://www.workatastartup.com/application", complete: true })).json()).toMatchObject({ site: "ycombinator.com", complete: true, source: "user" });
+    expect((await (await post("/api/site-profiles", { site: "ycombinator.com", complete: false })).json()).complete).toBe(false);
+    expect(await (await get("/api/site-profiles")).json()).toHaveLength(1);
   });
 
   it("serves job detail with only the transitions a human may make", async () => {
@@ -437,14 +499,14 @@ describe("email review and send", () => {
     writeFileSync(join(dataDir, "documents", "job-1-cv-v1.pdf"), "%PDF-1.4 the cv");
     saveDocument(db, { jobId, kind: "cv", path: "documents/job-1-cv-v1.pdf", blocks: [{ text: "Built a payments API serving 50000 users", factIds: [fact] }] }, "agent");
     writeFileSync(join(dataDir, "documents", "job-1-cover-v1.pdf"), "%PDF-1.4 the cover letter");
-    saveDocument(db, { jobId, kind: "cover", path: "documents/job-1-cover-v1.pdf", blocks: [{ text: "Dear hiring team,", factIds: [], kind: "boilerplate" }, { text: "I built a payments API serving 50000 users.", factIds: [fact] }] }, "agent");
+    saveDocument(db, { jobId, kind: "cover", path: "documents/job-1-cover-v1.pdf", blocks: [{ text: "Dear Hiring Manager,", factIds: [], kind: "boilerplate" }, { text: "I'm applying for the Backend Engineer role at Acme. I built a payments API serving 50000 users.", factIds: [fact] }] }, "agent");
     agent.transitionJob(jobId, "materials_ready");
     const contactId = agent.addContact({ companyId, email: "jobs@acme.example", sourceUrl: "https://acme.example/careers" });
     const { emailId } = agent.draftEmail({
       jobId, contactId,
       blocks: [
-        { text: "Dear hiring team,", factIds: [], kind: "boilerplate" },
-        { text: "I built a payments API serving 50000 users and would like to apply.", factIds: [fact] },
+        { text: "Dear Hiring Manager,", factIds: [], kind: "boilerplate" },
+        { text: "I'm applying for the Backend Engineer role at Acme. I built a payments API serving 50000 users. My CV and cover letter are attached.", factIds: [fact] },
         { text: "Best regards,", factIds: [], kind: "boilerplate" },
       ],
     });
@@ -460,7 +522,7 @@ describe("email review and send", () => {
     const e = await (await get(`/api/emails/${emailId}`)).json();
     expect(e).toMatchObject({ status: "draft", subject: "Application: Backend Engineer, Ada Lovelace", domainMismatch: false, domainUnclear: false, edited: false });
     expect(e.contact).toMatchObject({ email: "jobs@acme.example", sourceUrl: "https://acme.example/careers" });
-    expect(e.bodyText).toMatch(/Best regards,\nAda Lovelace\n0911\nada@example.com$/);
+    expect(e.bodyText).toMatch(/Best regards,\nAda Lovelace\nada@example.com$/);
     expect((await (await get("/api/emails?status=draft")).json()).map((x: any) => x.id)).toEqual([emailId]);
     const job = await (await get(`/api/jobs/${jobId}`)).json();
     expect(job.contacts).toHaveLength(1);
@@ -652,7 +714,7 @@ describe("saved posting, people and research settings", () => {
     agent.transitionJob(jobId, "materials_ready");
     const jane = agent.addPerson({ companyId: co, name: "Jane Doe", role: "CTO", sourceUrl: "https://acme.example/team" });
     const contactId = agent.addContact({ companyId: co, email: "jane.doe@acme.example", sourceUrl: "https://acme.example/team", personId: jane, verification: "pattern", name: "Jane Doe", evidence: { pattern: "first.last", exampleEmail: "sam.lee@acme.example", exampleName: "Sam Lee", exampleUrl: "https://acme.example/press" } });
-    const { emailId } = agent.draftEmail({ jobId, contactId, blocks: [{ text: "Dear Jane,", factIds: [], kind: "boilerplate" }, { text: "I built a payments API serving 50000 users.", factIds: [fact] }, { text: "Best regards,", factIds: [], kind: "boilerplate" }] });
+    const { emailId } = agent.draftEmail({ jobId, contactId, blocks: [{ text: "Dear Jane,", factIds: [], kind: "boilerplate" }, { text: "I'm applying for the Backend Engineer role at Acme. I built a payments API serving 50000 users.", factIds: [fact] }, { text: "Best regards,", factIds: [], kind: "boilerplate" }] });
     const e = await (await get(`/api/emails/${emailId}`)).json();
     expect(e.contact).toMatchObject({ verification: "pattern", evidence: { pattern: "first.last", exampleName: "Sam Lee" } });
     const job = await (await get(`/api/jobs/${jobId}`)).json();
@@ -867,5 +929,73 @@ describe("sponsorship inferred from the work authorization text", () => {
     expect(p.inferredSponsorship).toBeUndefined();
     await put({ workAuthorization: "citizen" });
     expect((await (await get("/api/profile")).json()).inferredSponsorship).toBeUndefined();
+  });
+});
+
+describe("skill levels and the default level", () => {
+  it("saves a level in the skills box, shows it back, and saves the default in Settings", async () => {
+    const put = (path: string, b: object) => fetch(base + path, { method: "PUT", headers: json, body: JSON.stringify(b) });
+    expect((await put("/api/cv/skills", { group: "Backend", items: ["Python:advanced", "Node.js"] })).status).toBe(200);
+    const cv = await (await get("/api/cv")).json();
+    expect(cv.skills[0].skills.map((s: any) => [s.text, s.level])).toEqual([["Python", "advanced"], ["Node.js", undefined]]);
+    const body = { roles: [], remotePolicy: "any", dailyApplicationLimit: 5, dailyDiscoveryLimit: 5 };
+    expect((await put("/api/preferences", { ...body, defaultSkillLevel: "intermediate" })).status).toBe(200);
+    expect((await (await get("/api/preferences")).json()).defaultSkillLevel).toBe("intermediate");
+    await put("/api/preferences", { ...body });
+    expect((await (await get("/api/preferences")).json()).defaultSkillLevel).toBeUndefined();
+  });
+});
+
+describe("a question card answered from the dashboard", () => {
+  it("saves the answer as a standard answer and closes the card", async () => {
+    const agent = createAgentApi(db);
+    agent.askUser(null, { question: "Equity preference", options: ["not interested in equity", "equity is very important"] });
+    const card = (await (await get("/api/actions")).json()).find((a: any) => a.kind === "sensitive_question");
+    expect(card.payload.options).toHaveLength(2);
+    await fetch(base + "/api/standard-answers", { method: "PUT", headers: json, body: JSON.stringify({ label: card.payload.question, answer: "equity is very important" }) });
+    expect((await post(`/api/actions/${card.id}/resolve`, { status: "done" })).status).toBe(200);
+    expect((await (await get("/api/standard-answers")).json()).find((s: any) => s.label === "Equity preference").answer).toBe("equity is very important");
+    expect((await (await get("/api/actions")).json()).filter((a: any) => a.kind === "sensitive_question")).toHaveLength(0);
+  });
+});
+
+describe("keeping what the user told the agent", () => {
+  it("shows the proposal, saves it on the user's click, and refuses a second click", async () => {
+    const agent = createAgentApi(db);
+    agent.proposeRemember(null, { type: "answer", label: "Equity preference", original: "some equity but not crucial", polished: "I would like some equity, but it is not crucial." });
+    const card = (await (await get("/api/actions")).json()).find((a: any) => a.payload.proposal);
+    expect(card.payload.proposal).toMatchObject({ label: "Equity preference", original: "some equity but not crucial" });
+    expect(await (await get("/api/standard-answers")).json()).toEqual([]);
+    expect((await post(`/api/proposals/${card.id}/accept`, { use: "text", text: "Some equity, not crucial." })).status).toBe(200);
+    expect((await (await get("/api/standard-answers")).json())[0]).toMatchObject({ label: "Equity preference", answer: "Some equity, not crucial." });
+    expect((await post(`/api/proposals/${card.id}/accept`, {})).status).toBeGreaterThanOrEqual(400);
+    expect((await fetch(base + "/api/proposals/1/accept", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+  });
+});
+
+describe("the levels the user is looking for", () => {
+  it("offers the six levels, saves a choice of several, and refuses anything typed", async () => {
+    const lists = await (await get("/api/lists")).json();
+    expect(lists.seniorityLevels.map((l: any) => l.value)).toEqual(["intern", "junior", "mid", "senior", "lead", "staff_plus"]);
+    expect(lists.seniorityLevels.find((l: any) => l.value === "staff_plus").label).toBe("Staff and above");
+    const put = (b: object) => fetch(base + "/api/preferences", { method: "PUT", headers: json, body: JSON.stringify({ roles: [], remotePolicy: "any", dailyApplicationLimit: 5, dailyDiscoveryLimit: 5, ...b }) });
+    expect((await put({ seniority: ["mid", "senior", "lead"] })).status).toBe(200);
+    expect((await (await get("/api/preferences")).json()).seniority).toEqual(["mid", "senior", "lead"]);
+    const bad = await put({ seniority: ["minor middle"] });
+    expect(bad.status).toBeGreaterThanOrEqual(400);
+    expect((await bad.json()).error).toMatch(/is not a level/);
+  });
+});
+
+describe("the way the agent asks questions", () => {
+  it("offers the kinds of question, saves a main choice with overrides, and refuses a made-up kind", async () => {
+    const lists = await (await get("/api/lists")).json();
+    expect(lists.questionCategories.map((c: any) => c.value)).toEqual(["skill_levels", "preferences", "stories", "sensitive", "other"]);
+    const put = (b: object) => fetch(base + "/api/preferences", { method: "PUT", headers: json, body: JSON.stringify({ roles: [], remotePolicy: "any", dailyApplicationLimit: 5, dailyDiscoveryLimit: 5, ...b }) });
+    expect((await put({})).status).toBe(200);
+    expect(await (await get("/api/preferences")).json()).toMatchObject({ questionMode: "batch", questionOverrides: {} });
+    expect((await put({ questionMode: "cards", questionOverrides: { skill_levels: "never", sensitive: "chat" } })).status).toBe(200);
+    expect(await (await get("/api/preferences")).json()).toMatchObject({ questionMode: "cards", questionOverrides: { skill_levels: "never", sensitive: "chat" } });
+    expect((await put({ questionOverrides: { gossip: "chat" } })).status).toBeGreaterThanOrEqual(400);
   });
 });

@@ -3,6 +3,7 @@ import { queueAction } from "./actionQueue.js";
 import { FREE_MAIL, getEmail } from "./email.js";
 import { saveDocument, type Block } from "./documents.js";
 import { logEvent, transitionJob } from "./jobs.js";
+import { verificationTargets } from "./verification.js";
 import { getPreferences, requireHuman } from "./profile.js";
 import type { Actor, JobState } from "./states.js";
 
@@ -23,6 +24,8 @@ export interface InboundMessage {
   precedence?: string;
   /** For a delivery failure: the address that did not take the mail. */
   failedRecipient?: string;
+  /** The web links in the message (https only). Untrusted. */
+  links?: string[];
 }
 
 export const CATEGORIES = ["reply", "auto_reply", "bounce", "rejection", "interview", "other"] as const;
@@ -408,6 +411,8 @@ export interface SyncTargets {
   senders: string[];
   /** Look back this far. */
   since: Date;
+  /** While an account waits to be verified: the names of its sites, to find the mail that checks the address. */
+  verification?: { labels: string[]; since: Date };
 }
 
 /**
@@ -432,5 +437,5 @@ export function getSyncTargets(db: DB, nowMs: number = Date.now()): SyncTargets 
     const d = domainOf(m.contactEmail);
     senders.add(FREE_MAIL.has(d) ? m.contactEmail : d);
   }
-  return { messageIds: [...new Set(rows.map((r) => normId(r.messageId)))], senders: [...senders], since };
+  return { messageIds: [...new Set(rows.map((r) => normId(r.messageId)))], senders: [...senders], since, verification: verificationTargets(db) };
 }

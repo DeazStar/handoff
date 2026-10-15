@@ -2,7 +2,7 @@ import { effectiveSponsorship, type Profile } from "./profile.js";
 import type { StandardAnswer } from "./application.js";
 
 /** Where an answer can come from. The agent names the source; the server checks that it exists and whether the answer follows from it. */
-export const PROFILE_FIELDS = ["fullName", "email", "phone", "location", "links", "languages", "workAuthorization", "noticePeriod", "requiresSponsorship"] as const;
+export const PROFILE_FIELDS = ["fullName", "email", "phone", "location", "links", "languages", "workAuthorization", "noticePeriod", "requiresSponsorship", "experienceYears"] as const;
 export type ProfileField = (typeof PROFILE_FIELDS)[number];
 
 export type Check = "verified" | "unchecked" | "differs";
@@ -47,9 +47,16 @@ const sameGroup = (a: string): number => SAME.findIndex((g) => g.map(norm).inclu
 
 const has = (s: string | undefined): s is string => !!s && s.trim().length > 0;
 
+/** Numbers the server works out from the user's CV, for fields that are not typed into the profile. */
+export interface Derived {
+  experienceYears?: number;
+  experienceMonths?: number;
+}
+
 /** The text values a profile field allows an answer to be made from. */
-function profileValues(p: Profile, field: ProfileField): string[] {
+function profileValues(p: Profile, field: ProfileField, derived: Derived = {}): string[] {
   switch (field) {
+    case "experienceYears": return derived.experienceYears === undefined ? [] : [String(derived.experienceYears)];
     case "fullName": {
       const parts = p.fullName.trim().split(/\s+/);
       return [p.fullName, parts[0]!, parts.at(-1)!, parts.slice(0, -1).join(" ")].filter(has);
@@ -71,7 +78,7 @@ export type SourceError = { ok: false; problem: string };
 export function resolveSources(
   from: string[] | undefined,
   kind: "profile" | "standard",
-  ctx: { profile: Profile | null; standard: StandardAnswer[] },
+  ctx: { profile: Profile | null; standard: StandardAnswer[]; derived?: Derived },
 ): { ok: true; fields: ProfileField[]; labels: StandardAnswer[] } | SourceError {
   const fields: ProfileField[] = [];
   const labels: StandardAnswer[] = [];
@@ -80,7 +87,7 @@ export function resolveSources(
     const name = rest.join(":").trim();
     if (kind === "profile" && type === "profile") {
       if (!PROFILE_FIELDS.includes(name as ProfileField)) return { ok: false, problem: `"${raw}" is not a profile field. Use one of: ${PROFILE_FIELDS.map((f) => `profile:${f}`).join(", ")}` };
-      if (!ctx.profile || profileValues(ctx.profile, name as ProfileField).length === 0) return { ok: false, problem: `Your profile has nothing saved for ${name}, so it cannot be the source. Leave the question blank and list it` };
+      if (!ctx.profile || profileValues(ctx.profile, name as ProfileField, ctx.derived).length === 0) return { ok: false, problem: `Your profile has nothing saved for ${name}, so it cannot be the source. Leave the question blank and list it` };
       fields.push(name as ProfileField);
     } else if (kind === "standard" && type === "standard") {
       const hit = ctx.standard.find((s) => s.label.toLowerCase() === name.toLowerCase());
@@ -94,10 +101,22 @@ export function resolveSources(
 }
 
 /** Does this answer follow from the cited profile fields? Wrong answers are flagged, never refused. */
-export function checkProfileAnswer(question: string, answer: string, fields: ProfileField[], p: Profile): CheckResult {
+export function checkProfileAnswer(question: string, answer: string, fields: ProfileField[], p: Profile, derived: Derived = {}): CheckResult {
   const a = norm(answer);
   let unchecked: string | undefined;
   for (const field of fields) {
+    if (field === "experienceYears") {
+      const years = derived.experienceYears;
+      if (years === undefined) { unchecked = "No dated work entry to calculate from"; continue; }
+      const nums = (answer.match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
+      const months = derived.experienceMonths ?? years * 12;
+      if (!nums.length) { unchecked = "The answer has no number"; continue; }
+      const exact = nums.length === 1 && (nums[0] === years || Math.abs(nums[0]! * 12 - months) < 6);
+      const atLeast = nums.length === 1 && /\+|or more|at least|over|more than|minimum/i.test(answer) && nums[0]! <= months / 12;
+      const range = nums.length >= 2 && nums[0]! <= months / 12 && months / 12 <= nums[1]! + 0.999;
+      if (exact || atLeast || range) return { check: "verified", note: `Calculated from your dated roles: ${years} year${years === 1 ? "" : "s"}` };
+      return { check: "differs", note: `Your dated roles add up to ${years} year${years === 1 ? "" : "s"} (${months} months)` };
+    }
     if (field === "requiresSponsorship") {
       if (!/sponsor/i.test(question)) { unchecked = "This question is not about sponsorship, so your sponsorship setting cannot confirm the answer"; continue; }
       const given = yesNo(answer);

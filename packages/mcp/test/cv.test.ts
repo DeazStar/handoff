@@ -96,7 +96,7 @@ describe("save_cv", () => {
   it("builds a PDF from a plan, keeps the file, and records the plan", async () => {
     const jobId = await job();
     const plan = {
-      summary: [{ text: "Backend engineer who built a payments API serving 50000 users.", factIds: [ids.a1] }],
+      summary: [{ text: "Backend engineer working on payments systems.", factIds: [ids.a1] }],
       experience: [{ entryId: ids.beta, bullets: [ids.b1] }, { entryId: ids.acme, bullets: [ids.a2, ids.a1] }],
       education: [{ entryId: ids.edu }],
       skills: [{ group: "Backend", factIds: [ids.rust] }],

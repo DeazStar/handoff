@@ -1,9 +1,10 @@
+import type { Drafter } from "./drafter.js";
 import { timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { readFileSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
-import { generatePassword, siteOf, vaultNameFor, effectiveSponsorship, collectYc, runCareerFinder, VERDICTS, type Verdict, COUNTRIES, EMPLOYMENT_TYPES, FACT_KINDS, defaultVerifyDeps, verifyContact, type VerifyDeps, TransitionError, createHumanApi, orderForCv, type CvPlan, type DB, type JobState } from "@jobhunt/core";
+import { QUESTION_CATEGORIES, QUESTION_CATEGORY_TEXT, SENIORITY_LEVELS, SENIORITY_LABELS, generatePassword, siteOf, vaultNameFor, effectiveSponsorship, collectYc, runCareerFinder, VERDICTS, type Verdict, COUNTRIES, EMPLOYMENT_TYPES, FACT_KINDS, defaultVerifyDeps, verifyContact, type VerifyDeps, TransitionError, createHumanApi, orderForCv, type CvPlan, type DB, type JobState } from "@jobhunt/core";
 import { renderCvPdf } from "@jobhunt/render";
 import { VaultError, type Vault } from "@jobhunt/vault";
 import { MailError, type Mailer } from "./mail.js";
@@ -115,7 +116,7 @@ const int = (s: string) => {
   return n;
 };
 
-export function createApp(db: DB, opts: { token: string; dataDir: string; vault: Vault; mailer: Mailer; verifyDeps?: VerifyDeps; collectYc?: typeof collectYc; replySync?: ReplySync; clipboard?: Clipboard; clipboardClearMs?: number }): Server {
+export function createApp(db: DB, opts: { token: string; dataDir: string; vault: Vault; mailer: Mailer; verifyDeps?: VerifyDeps; collectYc?: typeof collectYc; replySync?: ReplySync; clipboard?: Clipboard; clipboardClearMs?: number; drafter?: Drafter }): Server {
   const vault = opts.vault;
   const mailer = opts.mailer;
   const human = createHumanApi(db);
@@ -135,8 +136,45 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
     if (b.scope !== "job" && b.scope !== "general") throw new HttpError(400, "scope must be job or general");
     if (!b.fact || !FACT_KINDS.includes(b.fact.kind)) throw new HttpError(400, "fact.kind is invalid");
     const { kind, text, dateRange } = b.fact;
-    return { factId: human.confirmGap(int(m[1]!), { kind, text: String(text ?? ""), dateRange }, b.scope) };
+    const entryId = b.fact.entryId === undefined || b.fact.entryId === null ? undefined : int(String(b.fact.entryId));
+    return { factId: human.confirmGap(int(m[1]!), { kind, text: String(text ?? ""), dateRange, entryId }, b.scope) };
   });
+
+  // "Draft this for me": mark gaps for Claude to draft (one gap, one job's gaps, or all). Claude answers in its next run.
+  const gapScope = (b: Record<string, any>) => {
+    if (b.actionId !== undefined) return { actionId: int(String(b.actionId)) };
+    if (b.jobId !== undefined) return { jobId: int(String(b.jobId)) };
+    if (b.all === true) return {};
+    throw new HttpError(400, "Give actionId, jobId or all");
+  };
+  // Pressing the button also starts Claude in the background, so nobody has to type /gaps. Without Claude installed it falls back to /gaps.
+  route("POST", "/api/gap-drafts", (_m, b) => {
+    const requested = human.requestGapDrafts(gapScope(b));
+    const started = opts.drafter ? opts.drafter.start() : false;
+    return { requested, started };
+  });
+  route("POST", "/api/application-count/reset", () => (human.resetApplicationCount(), human.applicationRoom()));
+  route("GET", "/api/application-count", () => human.applicationRoom());
+  route("GET", "/api/documents/(\\d+)/score", (m) => human.getCvScore(int(m[1]!)) ?? { score: null });
+  route("GET", "/api/metric-gaps", () => ({ withoutNumber: human.countBulletsWithoutNumber() }));
+  route("POST", "/api/metric-gaps", () => ({ added: human.requestMetricCards(5), left: human.countBulletsWithoutNumber() }));
+  route("POST", "/api/actions/(\\d+)/confirm-metric", (m, b) => (human.confirmMetric(int(m[1]!), String(b.text ?? "")), { ok: true }));
+  route("POST", "/api/metric-polish", (_m, b) => {
+    human.requestMetricPolish(int(String(b.actionId)), String(b.numbers ?? ""));
+    return { started: opts.drafter ? opts.drafter.start() : false };
+  });
+  route("GET", "/api/site-profiles", () => human.listSiteProfiles());
+  route("POST", "/api/site-profiles", (_m, b) => {
+    if (typeof b.site !== "string" || !b.site.trim()) throw new HttpError(400, "site is required");
+    try { return human.setSiteProfile(b.site, b.complete !== false); } catch (e) { throw new HttpError(400, (e as Error).message); }
+  });
+  route("POST", "/api/gap-polish", (_m, b) => {
+    human.requestGapPolish(int(String(b.actionId)), String(b.text ?? ""));
+    return { started: opts.drafter ? opts.drafter.start() : false };
+  });
+  route("POST", "/api/gap-polish/clear", (_m, b) => (human.clearGapPolish(int(String(b.actionId))), { ok: true }));
+  route("GET", "/api/gap-drafts/status", () => (opts.drafter ? opts.drafter.status() : { available: false, running: false, error: null, finishedAt: null }));
+  route("POST", "/api/gap-drafts/cancel", (_m, b) => ({ cancelled: human.cancelGapDrafts(gapScope(b)) }));
 
   route("GET", "/api/jobs", (_m, _b, url) => human.listJobs((url.searchParams.get("state") as JobState) ?? undefined, "priority"));
   route("GET", "/api/jobs/(\\d+)", (m) => {
@@ -204,6 +242,10 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
       cvGuidance: optText(b.cvGuidance),
       coverLetters: b.coverLetters === "off" ? "off" : b.coverLetters === "auto" ? "auto" : undefined,
       coverGuidance: optText(b.coverGuidance),
+      writingStyle: optText(b.writingStyle),
+      questionMode: ["batch", "chat", "cards"].includes(b.questionMode) ? b.questionMode : undefined,
+      questionOverrides: b.questionOverrides && typeof b.questionOverrides === "object" ? b.questionOverrides : undefined,
+      defaultSkillLevel: ["beginner", "intermediate", "advanced", "expert"].includes(b.defaultSkillLevel) ? b.defaultSkillLevel : undefined,
       cookieBanners: b.cookieBanners === "necessary" ? "necessary" : b.cookieBanners === "accept" ? "accept" : undefined,
       autoMarkReplied: b.autoMarkReplied === false ? false : b.autoMarkReplied === true ? true : undefined,
       followUpDays: b.followUpDays === undefined ? undefined : Number(b.followUpDays),
@@ -400,6 +442,10 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
     }
     return { ok: true, copied: what, clearsInSeconds: what === "password" ? Math.round(clearMs / 1000) : undefined };
   });
+  route("POST", "/api/proposals/(\\d+)/accept", (m, b) => human.acceptProposal(int(m[1]!), { use: ["polished", "original", "text"].includes(b.use) ? b.use : undefined, text: typeof b.text === "string" ? b.text : undefined }));
+  route("GET", "/api/verifications", () => human.listVerifications());
+  route("POST", "/api/verifications/(\\d+)/used", (m) => (human.setVerificationUsed(int(m[1]!)), { ok: true }));
+  route("POST", "/api/verifications/(\\d+)/ignore", (m) => (human.ignoreVerification(int(m[1]!)), { ok: true }));
   route("POST", "/api/accounts/(\\d+)/confirm", (m) => (human.confirmAccount(int(m[1]!)), { ok: true }));
   route("POST", "/api/accounts/(\\d+)/verified", (m) => (human.markAccountVerified(int(m[1]!)), { ok: true }));
   route("DELETE", "/api/accounts/(\\d+)", async (m) => {
@@ -481,6 +527,8 @@ export function createApp(db: DB, opts: { token: string; dataDir: string; vault:
   // The choices the dashboard offers in pick lists. Free text for these caused silent mismatches.
   route("GET", "/api/lists", () => ({
     countries: COUNTRIES,
+    questionCategories: QUESTION_CATEGORIES.map((value) => ({ value, label: QUESTION_CATEGORY_TEXT[value] })),
+    seniorityLevels: SENIORITY_LEVELS.map((value) => ({ value, label: SENIORITY_LABELS[value] })),
     employmentTypes: EMPLOYMENT_TYPES.map((value) => ({ value, label: value.replace("_", "-").replace(/^./, (c) => c.toUpperCase()) })),
   }));
   route("GET", "/api/cv", () => human.getCvMaterial(null));
